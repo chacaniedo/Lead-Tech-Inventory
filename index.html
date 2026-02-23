@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LTISC Inventory Management System</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, #0a0e27 0%, #0b1a3f 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #e0e0e0;
+        }
+
+        .container {
+            text-align: center;
+            max-width: 500px;
+            padding: 40px 20px;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .logo-section {
+            margin-bottom: 30px;
+        }
+
+        .logo-icon {
+            font-size: 80px;
+            color: #0a9b03;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.05);
+            }
+        }
+
+        .company-name {
+            font-size: 32px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #0a9b03, #1dd1a1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .tagline {
+            font-size: 14px;
+            color: #a0a0a0;
+            font-weight: 400;
+            margin-bottom: 30px;
+        }
+
+        .loading-section {
+            margin: 30px 0;
+        }
+
+        .spinner {
+            border: 3px solid rgba(10, 155, 3, 0.2);
+            border-top: 3px solid #0a9b03;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .loading-text {
+            color: #a0a0a0;
+            font-size: 13px;
+            font-weight: 500;
+            margin-top: 15px;
+        }
+
+        .status-message {
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+            font-size: 12px;
+            background: rgba(10, 155, 3, 0.1);
+            border: 1px solid rgba(10, 155, 3, 0.3);
+            color: #1dd1a1;
+            display: none;
+        }
+
+        .error-message {
+            background: rgba(255, 107, 107, 0.1);
+            border: 1px solid rgba(255, 107, 107, 0.3);
+            color: #ff6b6b;
+        }
+
+        .features {
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 1px solid rgba(10, 155, 3, 0.2);
+        }
+
+        .features-title {
+            font-size: 14px;
+            color: #0a9b03;
+            font-weight: 600;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .feature-item {
+            padding: 10px;
+            background: rgba(10, 155, 3, 0.05);
+            border: 1px solid rgba(10, 155, 3, 0.2);
+            border-radius: 4px;
+            font-size: 11px;
+            color: #a0a0a0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .feature-item i {
+            color: #0a9b03;
+            font-size: 13px;
+            flex-shrink: 0;
+        }
+
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(10, 155, 3, 0.2);
+            font-size: 11px;
+            color: #7a8fa6;
+        }
+
+        .version {
+            font-size: 10px;
+            color: #5a6a7a;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Logo Section -->
+        <div class="logo-section">
+            <div class="logo-icon">
+                <i class="fa-solid fa-cube"></i>
+            </div>
+            <div class="company-name">LTISC</div>
+            <div class="tagline">Inventory Management System</div>
+        </div>
+
+        <!-- Loading Section -->
+        <div class="loading-section">
+            <div class="spinner"></div>
+            <div class="loading-text">Authenticating user...</div>
+            <div id="statusMessage" class="status-message">
+                <i class="fa-solid fa-circle-info" style="margin-right: 5px;"></i>
+                <span id="statusText">Verifying credentials</span>
+            </div>
+        </div>
+
+        <!-- Features -->
+        <div class="features">
+            <div class="features-title">System Features</div>
+            <div class="features-grid">
+                <div class="feature-item">
+                    <i class="fa-solid fa-boxes-stacked"></i>
+                    <span>Inventory Tracking</span>
+                </div>
+                <div class="feature-item">
+                    <i class="fa-solid fa-warehouse"></i>
+                    <span>Warehouse Mgmt</span>
+                </div>
+                <div class="feature-item">
+                    <i class="fa-solid fa-shopping-cart"></i>
+                    <span>Purchasing Orders</span>
+                </div>
+                <div class="feature-item">
+                    <i class="fa-solid fa-calendar-check"></i>
+                    <span>Attendance</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p style="margin: 0;">Lead Tech Industrial Solutions Corporation</p>
+            <div class="version">
+                <p style="margin: 5px 0;">Version 1.0.0</p>
+                <p style="margin: 0;">© 2026 All Rights Reserved</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Redirect to login page
+        window.location.href = 'login.html';
+    </script>
+</body>
+</html>

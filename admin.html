@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Admin Portal - LTISC Inventory</title>
+<link rel="stylesheet" href="dashboard.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+
+<header class="topbar">
+  <div class="left">
+    <span class="menu-icon" id="menuBtn">☰</span>
+    <h2>LTISC Admin Portal</h2>
+  </div>
+  <div style="display:flex; gap:20px; align-items:center;">
+    <button id="currentUserRole" class="user-role" style="background:rgba(10, 155, 3, 0.2);color:#0a9b03;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid #0a9b03;cursor:pointer;transition:all 0.3s;">ADMIN</button>
+    <button id="backBtn" style="background:#0a9b03;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;display:flex;align-items:center;gap:8px;">
+      <i class="fa-solid fa-arrow-left"></i> Go Back
+    </button>
+  </div>
+</header><nav class="sidebar" id="sidebar">
+  <div class="nav-section">
+    <span class="nav-section-title">ADMIN</span>
+    
+    <!-- Dashboard Menu Item -->
+    <a class="nav-link" data-page="dashboard">
+      <i class="fa-solid fa-chart-line"></i><span>Dashboard</span>
+    </a>
+    
+    <!-- User Management Menu Item (Expandable) -->
+    <div class="nav-menu-item">
+      <button class="nav-menu-toggle" id="userManagementToggle">
+        <i class="fa-solid fa-users"></i>
+        <span>User Management</span>
+        <i class="fa-solid fa-chevron-down" style="margin-left:auto;font-size:12px;"></i>
+      </button>
+      <div class="nav-submenu" id="userManagementSubmenu">
+        <a class="nav-link" data-page="users" style="padding-left:40px;">
+          <i class="fa-solid fa-warehouse"></i><span>Inventory</span>
+        </a>
+        <a class="nav-link" data-page="attendance-users" style="padding-left:40px;">
+          <i class="fa-solid fa-clipboard-list"></i><span>Attendance</span>
+        </a>
+      </div>
+    </div>
+
+    <a class="nav-link" data-page="settings">
+      <i class="fa-solid fa-gear"></i><span>Settings</span>
+    </a>
+  </div>
+
+  <button id="logoutBtn" class="logout-btn" style="width:calc(100% - 32px);padding:12px 16px;display:flex;align-items:center;gap:10px;justify-content:center;margin:auto;position:absolute;bottom:20px;left:20px;right:20px;">
+    <i class="fa-solid fa-sign-out-alt"></i> Logout
+  </button>
+</nav>
+
+
+<main class="dashboard">
+
+<!-- DASHBOARD PAGE -->
+<section id="dashboard" class="page" style="display:block;">
+  <section class="inventory">
+    <h2 style="margin-top:0;color:#0a9b03;">Admin Dashboard</h2>
+    
+    <!-- Stats Cards Row -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:20px;margin-bottom:30px;">
+      <!-- Total Users Card -->
+      <div style="background:linear-gradient(135deg,rgba(10,155,3,0.15) 0%,rgba(10,155,3,0.05) 100%);border:1px solid rgba(10,155,3,0.3);border-radius:8px;padding:20px;display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer;transition:all 0.3s;" onclick="window.goToInventoryUsers()" onmouseover="this.style.transform='translateY(-5px)';this.style.boxShadow='0 8px 24px rgba(10,155,3,0.3)';this.style.borderColor='#0a9b03';" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='none';this.style.borderColor='rgba(10,155,3,0.3)';">
+        <div style="font-size:32px;color:#0a9b03;margin-bottom:10px;">
+          <i class="fa-solid fa-users"></i>
+        </div>
+        <div style="font-size:24px;font-weight:700;color:#fff;margin-bottom:5px;" id="totalUsersCount">0</div>
+        <div style="font-size:13px;color:#a0a0a0;">Total Users</div>
+      </div>
+
+      <!-- Active Users Card -->
+      <div style="background:linear-gradient(135deg,rgba(29,209,161,0.15) 0%,rgba(29,209,161,0.05) 100%);border:1px solid rgba(29,209,161,0.3);border-radius:8px;padding:20px;display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer;transition:all 0.3s;" onclick="window.goToInventoryUsers('active')" onmouseover="this.style.transform='translateY(-5px)';this.style.boxShadow='0 8px 24px rgba(29,209,161,0.3)';this.style.borderColor='#1dd1a1';" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='none';this.style.borderColor='rgba(29,209,161,0.3)';">
+        <div style="font-size:32px;color:#1dd1a1;margin-bottom:10px;">
+          <i class="fa-solid fa-user-check"></i>
+        </div>
+        <div style="font-size:24px;font-weight:700;color:#fff;margin-bottom:5px;" id="activeUsersCount">0</div>
+        <div style="font-size:13px;color:#a0a0a0;">Active Users</div>
+      </div>
+
+      <!-- Disabled Users Card -->
+      <div style="background:linear-gradient(135deg,rgba(255,107,107,0.15) 0%,rgba(255,107,107,0.05) 100%);border:1px solid rgba(255,107,107,0.3);border-radius:8px;padding:20px;display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer;transition:all 0.3s;" onclick="window.goToInventoryUsers('disabled')" onmouseover="this.style.transform='translateY(-5px)';this.style.boxShadow='0 8px 24px rgba(255,107,107,0.3)';this.style.borderColor='#ff6b6b';" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='none';this.style.borderColor='rgba(255,107,107,0.3)';">
+        <div style="font-size:32px;color:#ff6b6b;margin-bottom:10px;">
+          <i class="fa-solid fa-user-slash"></i>
+        </div>
+        <div style="font-size:24px;font-weight:700;color:#fff;margin-bottom:5px;" id="disabledUsersCount">0</div>
+        <div style="font-size:13px;color:#a0a0a0;">Disabled Users</div>
+      </div>
+
+      <!-- Warehouses Card -->
+      <div style="background:linear-gradient(135deg,rgba(255,165,0,0.15) 0%,rgba(255,165,0,0.05) 100%);border:1px solid rgba(255,165,0,0.3);border-radius:8px;padding:20px;display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer;transition:all 0.3s;" onclick="window.goToInventoryWarehouse()" onmouseover="this.style.transform='translateY(-5px)';this.style.boxShadow='0 8px 24px rgba(255,165,0,0.3)';this.style.borderColor='#ffa500';" onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='none';this.style.borderColor='rgba(255,165,0,0.3)';">
+        <div style="font-size:32px;color:#ffa500;margin-bottom:10px;">
+          <i class="fa-solid fa-warehouse"></i>
+        </div>
+        <div style="font-size:24px;font-weight:700;color:#fff;margin-bottom:5px;" id="totalWarehousesCount">0</div>
+        <div style="font-size:13px;color:#a0a0a0;">Warehouses</div>
+      </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(350px, 1fr));gap:20px;margin-bottom:30px;">
+      <!-- User Role Distribution Chart -->
+      <div style="background:rgba(15,30,53,0.6);border:1px solid rgba(10,155,3,0.2);border-radius:8px;padding:20px;height:400px;">
+        <h3 style="margin-top:0;margin-bottom:20px;color:#0a9b03;font-size:16px;">User Role Distribution</h3>
+        <div style="position:relative;width:100%;height:calc(100% - 50px);">
+          <canvas id="roleChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Warehouse Distribution Chart -->
+      <div style="background:rgba(15,30,53,0.6);border:1px solid rgba(10,155,3,0.2);border-radius:8px;padding:20px;height:400px;">
+        <h3 style="margin-top:0;margin-bottom:20px;color:#0a9b03;font-size:16px;">User Status Distribution</h3>
+        <div style="position:relative;width:100%;height:calc(100% - 50px);">
+          <canvas id="statusChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+  </section>
+</section>
+<section id="users" class="page" style="display:block;">
+  <section class="inventory">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h2>User Management</h2>
+      <button id="addUserBtn" style="padding:12px 24px;background:#0a9b03;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:15px;display:flex;align-items:center;gap:8px;transition:all 0.3s;width:150px;">
+        <i class="fa-solid fa-plus"></i> Add User
+      </button>
+    </div>
+
+    <!-- Search and Filters Row -->
+    <div style="display:flex;gap:15px;margin-bottom:20px;flex-wrap:wrap;align-items:center;">
+      <div style="flex:1;min-width:250px;position:relative;">
+        <input type="text" id="searchUsers" placeholder="Search by name or email..." style="width:100%;padding:10px 14px;border-radius:6px;border:1px solid rgba(10,155,3,.4);background:rgba(15,30,53,0.9);color:#e0e0e0;font-size:14px;">
+        <i class="fa-solid fa-magnifying-glass" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#a0a0a0;pointer-events:none;"></i>
+      </div>
+      
+      <select id="filterRole" style="padding:10px 14px;border-radius:6px;border:1px solid rgba(10,155,3,.4);background:rgba(15,30,53,0.9);color:#e0e0e0;font-size:14px;cursor:pointer;">
+        <option value="">All Roles</option>
+        <option value="admin">Admin</option>
+        <option value="inventory">Inventory</option>
+        <option value="warehouse">Warehouse</option>
+        <option value="purchasing">Purchasing</option>
+        <option value="attendance">Attendance</option>
+        <option value="employee">Employee</option>
+      </select>
+
+      <select id="filterStatus" style="padding:10px 14px;border-radius:6px;border:1px solid rgba(10,155,3,.4);background:rgba(15,30,53,0.9);color:#e0e0e0;font-size:14px;cursor:pointer;">
+        <option value="">All Status</option>
+        <option value="active">Active</option>
+        <option value="disabled">Disabled</option>
+      </select>
+
+      <button id="clearFiltersBtn" style="padding:10px 16px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#e0e0e0;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,.15)'" onmouseout="this.style.background='rgba(255,255,255,.1)'">
+        <i class="fa-solid fa-times"></i> Clear
+      </button>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th><th>Email</th><th>Role</th>
+          <th>Warehouse</th><th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="userBody"></tbody>
+    </table>
+  </section>
+</section>
+
+<!-- USER MODAL -->
+<div id="userModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 id="modalTitle">Add User</h2>
+      <button id="closeModalBtn" class="close-btn">&times;</button>
+    </div>
+    <form>
+      <div class="form-group">
+        <label>Full Name *</label>
+        <input type="text" id="userName" placeholder="Enter full name" required>
+      </div>
+      <div class="form-group">
+        <label>Email *</label>
+        <input type="email" id="userEmail" placeholder="Enter email" required>
+      </div>
+      <div class="form-group">
+        <label>Role *</label>
+        <select id="userRole" required>
+          <option value="">Select role</option>
+          <option value="admin">Admin</option>
+          <option value="warehouse">Warehouse Staff</option>
+          <option value="purchasing">Purchasing</option>
+          <option value="attendance">Attendance</option>
+          <option value="finance">Finance</option>
+          <option value="employee">Employee (Attendance Only)</option>
+        </select>
+      </div>
+      <div class="form-group" id="warehouseGroup" style="display:none;">
+        <label>Project *</label>
+        <select id="userWarehouse">
+          <option value="">Select project</option>
+        </select>
+      </div>
+      <div class="form-group" id="departmentGroup" style="display:none;">
+        <label>Department/Site *</label>
+        <input type="text" id="userDepartment" placeholder="Enter department or site name">
+      </div>
+      <div class="form-group" id="designationGroup" style="display:none;">
+        <label>Designation *</label>
+        <select id="userDesignation">
+          <option value="">Select designation</option>
+          <option value="Manager">Manager</option>
+          <option value="Supervisor">Supervisor</option>
+          <option value="Staff">Staff</option>
+          <option value="Intern">Intern</option>
+        </select>
+      </div>
+      <div id="userSearchGroup" style="display:none;">
+        <div class="form-group">
+          <label>Search User to Edit *</label>
+          <div style="position:relative;">
+            <input type="text" id="userSearchInput" placeholder="Type user name or role..." style="width:100%;padding:10px;background:#0f1e35;border:1px solid #1a3a5c;color:#e0e0e0;border-radius:4px;" autocomplete="off">
+            <input type="hidden" id="userSelectId">
+            <ul id="userSearchDropdown" style="position:absolute;top:100%;left:0;right:0;background:#1a3a5c;border:1px solid #1a3a5c;border-top:none;max-height:200px;overflow-y:auto;list-style:none;margin:0;padding:0;display:none;z-index:1000;border-radius:0 0 4px 4px;">
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:20px;">
+        <button type="button" id="saveUserBtn" class="btn-primary">Save User</button>
+        <button type="button" id="cancelUserBtn" class="btn-secondary">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- RESTRICTION MODAL -->
+<div id="restrictionModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>Set User Restriction</h2>
+      <button id="closeRestrictionModal" class="close-btn">&times;</button>
+    </div>
+    
+    <!-- Mode Toggle Tabs -->
+    <div style="display:flex;gap:10px;margin-bottom:20px;border-bottom:2px solid rgba(10,155,3,0.2);padding-bottom:0;">
+      <button type="button" id="perUserTabBtn" class="restriction-tab-btn active" style="padding:12px 20px;background:none;border:none;color:#0a9b03;cursor:pointer;font-weight:600;border-bottom:3px solid #0a9b03;transition:all 0.3s;font-size:14px;">
+        <i class="fa-solid fa-user"></i> Per User
+      </button>
+      <button type="button" id="roleBasedTabBtn" class="restriction-tab-btn" style="padding:12px 20px;background:none;border:none;color:#666;cursor:pointer;font-weight:600;border-bottom:3px solid transparent;transition:all 0.3s;font-size:14px;">
+        <i class="fa-solid fa-users"></i> Role Based
+      </button>
+    </div>
+    
+    <form onsubmit="return false;">
+      <!-- Per User Mode -->
+      <div id="perUserMode" style="display:block;">
+        <div class="form-group">
+          <label>Search User *</label>
+          <div style="position:relative;">
+            <input type="text" id="restrictionUserSearch" placeholder="Type user name or role..." required style="width:100%;padding:10px;background:#0f1e35;border:1px solid #1a3a5c;color:#e0e0e0;border-radius:4px;" autocomplete="off">
+            <input type="hidden" id="restrictionUserSelect" required>
+            <ul id="restrictionUserDropdown" style="position:absolute;top:100%;left:0;right:0;background:#1a3a5c;border:1px solid #1a3a5c;border-top:none;max-height:200px;overflow-y:auto;list-style:none;margin:0;padding:0;display:none;z-index:1000;border-radius:0 0 4px 4px;border-top:1px solid #1a3a5c;">
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Role Based Mode -->
+      <div id="roleBasedMode" style="display:none;">
+        <div class="form-group">
+          <label>Select Role *</label>
+          <select id="restrictionRoleSelect" style="width:100%;padding:10px;background:#0f1e35;border:1px solid #1a3a5c;color:#e0e0e0;border-radius:4px;" required>
+            <option value="">-- Choose Role --</option>
+            <option value="attendance">Attendance</option>
+            <option value="inventory">Inventory</option>
+            <option value="warehouse">Warehouse</option>
+            <option value="purchasing">Purchasing</option>
+            <option value="finance">Finance</option>
+            <option value="employee">Employee (Attendance Only)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Module Restrictions *</label>
+        <div style="display:flex;flex-direction:column;gap:12px;background:rgba(255,107,107,0.1);padding:12px;border-radius:4px;border:1px solid rgba(255,107,107,0.3);">
+          <div style="font-size:12px;color:#ff9999;margin-bottom:5px;"><i class="fa-solid fa-info-circle"></i> Check the modules this user IS RESTRICTED from accessing</div>
+          
+          <label style="display:flex;align-items:center;gap:10px;font-weight:normal;margin:0;cursor:pointer;padding:8px;border-radius:4px;transition:background 0.2s;" onmouseover="this.style.background='rgba(10,155,3,0.1)'" onmouseout="this.style.background='transparent'">
+            <input type="checkbox" id="restrictionInventory" value="inventory" style="width:18px;height:18px;cursor:pointer;accent-color:#0a9b03;">
+            <span style="flex:1;">Inventory</span>
+          </label>
+          
+          <label style="display:flex;align-items:center;gap:10px;font-weight:normal;margin:0;cursor:pointer;padding:8px;border-radius:4px;transition:background 0.2s;" onmouseover="this.style.background='rgba(10,155,3,0.1)'" onmouseout="this.style.background='transparent'">
+            <input type="checkbox" id="restrictionAttendance" value="attendance" style="width:18px;height:18px;cursor:pointer;accent-color:#0a9b03;">
+            <span style="flex:1;">Attendance</span>
+          </label>
+          
+          <label style="display:flex;align-items:center;gap:10px;font-weight:normal;margin:0;cursor:pointer;padding:8px;border-radius:4px;transition:background 0.2s;" onmouseover="this.style.background='rgba(10,155,3,0.1)'" onmouseout="this.style.background='transparent'">
+            <input type="checkbox" id="restrictionPurchasing" value="purchasing" style="width:18px;height:18px;cursor:pointer;accent-color:#0a9b03;">
+            <span style="flex:1;">Purchasing</span>
+          </label>
+          
+          <label style="display:flex;align-items:center;gap:10px;font-weight:normal;margin:0;cursor:pointer;padding:8px;border-radius:4px;transition:background 0.2s;" onmouseover="this.style.background='rgba(10,155,3,0.1)'" onmouseout="this.style.background='transparent'">
+            <input type="checkbox" id="restrictionFinance" value="finance" style="width:18px;height:18px;cursor:pointer;accent-color:#0a9b03;">
+            <span style="flex:1;">Finance</span>
+          </label>
+        </div>
+      </div>
+      
+      <div style="display:flex;gap:10px;margin-top:20px;">
+        <button type="button" id="saveRestrictionBtn" style="flex:1;padding:12px 24px;background:#0a9b03;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:15px;transition:all 0.3s;">Save Restriction</button>
+        <button type="button" id="cancelRestrictionBtn" style="flex:1;padding:12px 24px;background:#ff6b6b;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:15px;transition:all 0.3s;">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- SETTINGS PAGE -->
+<section id="settings" class="page" style="display:none">
+  <section class="inventory">
+    <h2>Settings - User Restrictions & Permissions</h2>
+
+    <!-- Settings Tabs -->
+    <div style="display:flex;gap:10px;margin-bottom:20px;border-bottom:2px solid rgba(10,155,3,.2);padding-bottom:0;">
+      <button id="permissionsTabBtn" onclick="window.switchSettingsTab('permissions')" style="padding:12px 20px;background:none;border:none;color:#0a9b03;cursor:pointer;font-weight:600;border-bottom:3px solid #0a9b03;transition:all 0.3s;font-size:14px;">
+        <i class="fa-solid fa-lock"></i> User Permissions
+      </button>
+      <button id="manualTabBtn" onclick="window.switchSettingsTab('manual')" style="padding:12px 20px;background:none;border:none;color:#a0a0a0;cursor:pointer;font-weight:600;border-bottom:3px solid transparent;transition:all 0.3s;font-size:14px;">
+        <i class="fa-solid fa-book"></i> User Manual
+      </button>
+    </div>
+
+    <!-- USER PERMISSIONS TAB CONTENT -->
+    <div id="permissions-tab" class="settings-tab-content" style="display:block;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <h3 style="margin:0;color:#15c524;">Manage User Restrictions</h3>
+        <button id="addPermissionBtn" style="padding:12px 24px;background:#0a9b03;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:15px;display:flex;align-items:center;gap:8px;transition:all 0.3s;">
+          <i class="fa-solid fa-plus"></i> Set Restriction
+        </button>
+      </div>
+
+      <!-- Permission Restrictions Table -->
+      <table style="width:100%;border-collapse:collapse;margin-bottom:30px;">
+        <thead>
+          <tr style="background: rgba(10, 155, 3, 0.1);">
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">User</th>
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">Role</th>
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">Module Access</th>
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">Restrictions</th>
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="permissionsBody">
+          <tr style="border-bottom:1px solid rgba(10, 155, 3, 0.2);">
+            <td colspan="5" style="text-align:center; padding:30px; color:#a0a0a0;">No restrictions set yet. Users have default access based on their role.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Role-Based Permissions Guide -->
+      <div style="background:rgba(10,155,3,0.1);padding:20px;border-radius:6px;border:1px solid rgba(10,155,3,0.3);margin-top:30px;">
+        <h4 style="color:#0a9b03;margin-top:0;">Default Role Permissions</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:15px;">
+          <div>
+            <h5 style="color:#eff0f3;margin-top:0;">Admin</h5>
+            <ul style="color:#a0a0a0;padding-left:20px;margin:0;">
+              <li>User Management</li>
+              <li>Settings & Permissions</li>
+              <li>View All Modules</li>
+              <li>Delete/Archive Users</li>
+            </ul>
+          </div>
+          <div>
+            <h5 style="color:#eff0f3;margin-top:0;">Warehouse Staff</h5>
+            <ul style="color:#a0a0a0;padding-left:20px;margin:0;">
+              <li>View Inventory</li>
+              <li>Manage Materials</li>
+              <li>Track Deliveries</li>
+              <li>No User Management</li>
+            </ul>
+          </div>
+          <div>
+            <h5 style="color:#eff0f3;margin-top:0;">Purchasing</h5>
+            <ul style="color:#a0a0a0;padding-left:20px;margin:0;">
+              <li>Create Purchase Orders</li>
+              <li>Manage Vendors</li>
+              <li>Track PO Status</li>
+              <li>No Admin Access</li>
+            </ul>
+          </div>
+          <div>
+            <h5 style="color:#eff0f3;margin-top:0;">Attendance</h5>
+            <ul style="color:#a0a0a0;padding-left:20px;margin:0;">
+              <li>Mark Attendance</li>
+              <li>View Reports</li>
+              <li>Limited to Own Department</li>
+              <li>No Inventory Access</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- USER MANUAL TAB CONTENT -->
+    <div id="manual-tab" class="settings-tab-content" style="display:none;">
+      <div style="margin:0;">
+        <h3 style="color:#0a9b03;margin-top:0;margin-bottom:15px;">LTISC Inventory Management System - User Manual</h3>
+        
+        <!-- Collapsible Sections -->
+        
+        <!-- Section 1: System Overview -->
+        <div style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.3);border-radius:6px;margin-bottom:10px;">
+          <button class="manual-section-header" onclick="window.toggleManualSection(this)" style="width:100%;background:rgba(10,155,3,0.15);padding:15px 20px;border:none;color:#0a9b03;text-align:left;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:6px;transition:all 0.3s;">
+            <span style="font-size:16px;">1. System Overview</span>
+            <i class="fa-solid fa-chevron-down" style="font-size:12px;transition:transform 0.3s;"></i>
+          </button>
+          <div class="manual-section-content" style="display:block;padding:20px;border-top:1px solid rgba(10,155,3,0.3);">
+            <p style="color:#a0a0a0;line-height:1.6;margin:0;">The LTISC Inventory Management System is a comprehensive web-based application designed to streamline inventory tracking, warehouse management, purchasing operations, and employee attendance. The system uses Firebase for real-time data synchronization and provides role-based access control for different user types.</p>
+          </div>
+        </div>
+
+        <!-- Section 2: Modules & Features -->
+        <div style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.3);border-radius:6px;margin-bottom:10px;">
+          <button class="manual-section-header" onclick="window.toggleManualSection(this)" style="width:100%;background:rgba(10,155,3,0.15);padding:15px 20px;border:none;color:#0a9b03;text-align:left;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:6px;transition:all 0.3s;">
+            <span style="font-size:16px;">2. Modules & Features</span>
+            <i class="fa-solid fa-chevron-down" style="font-size:12px;transition:transform 0.3s;"></i>
+          </button>
+          <div class="manual-section-content" style="display:none;padding:20px;border-top:1px solid rgba(10,155,3,0.3);">
+            <div style="background:rgba(29,209,161,0.1);padding:15px;border-radius:6px;margin-bottom:15px;border-left:4px solid #1dd1a1;">
+              <h5 style="color:#1dd1a1;margin-top:0;margin-bottom:10px;">Inventory Management</h5>
+              <ul style="color:#a0a0a0;margin:0;padding-left:20px;"><li>Real-time stock tracking with daily updates</li><li>Weekly stock chart visualization</li><li>Stock level monitoring</li><li>Automated stock reports</li></ul>
+            </div>
+            <div style="background:rgba(29,209,161,0.1);padding:15px;border-radius:6px;margin-bottom:15px;border-left:4px solid #1dd1a1;">
+              <h5 style="color:#1dd1a1;margin-top:0;margin-bottom:10px;">Warehouse Management</h5>
+              <ul style="color:#a0a0a0;margin:0;padding-left:20px;"><li>Multi-warehouse support</li><li>Warehouse staff management</li><li>Location tracking</li><li>Inventory distribution</li></ul>
+            </div>
+            <div style="background:rgba(29,209,161,0.1);padding:15px;border-radius:6px;margin-bottom:15px;border-left:4px solid #1dd1a1;">
+              <h5 style="color:#1dd1a1;margin-top:0;margin-bottom:10px;">Purchasing Management</h5>
+              <ul style="color:#a0a0a0;margin:0;padding-left:20px;"><li>Purchase order creation and tracking</li><li>Vendor management</li><li>Budget monitoring</li><li>Procurement analytics</li></ul>
+            </div>
+            <div style="background:rgba(29,209,161,0.1);padding:15px;border-radius:6px;border-left:4px solid #1dd1a1;">
+              <h5 style="color:#1dd1a1;margin-top:0;margin-bottom:10px;">Attendance Management</h5>
+              <ul style="color:#a0a0a0;margin:0;padding-left:20px;"><li>Employee clock in/out tracking</li><li>Attendance reports</li><li>Schedule management</li><li>Performance analytics</li></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 3: Dashboard Navigation -->
+        <div style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.3);border-radius:6px;margin-bottom:10px;">
+          <button class="manual-section-header" onclick="window.toggleManualSection(this)" style="width:100%;background:rgba(10,155,3,0.15);padding:15px 20px;border:none;color:#0a9b03;text-align:left;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:6px;transition:all 0.3s;">
+            <span style="font-size:16px;">3. Dashboard Navigation</span>
+            <i class="fa-solid fa-chevron-down" style="font-size:12px;transition:transform 0.3s;"></i>
+          </button>
+          <div class="manual-section-content" style="display:none;padding:20px;border-top:1px solid rgba(10,155,3,0.3);">
+            <p style="color:#a0a0a0;line-height:1.6;margin:0 0 10px 0;"><strong>Accessing the Dashboard:</strong> After logging in, you'll see the module selection page. Click on the module you want to access (Inventory, Warehouse, Purchasing, or Attendance). The dashboard displays key statistics and charts for your selected module.</p>
+            <p style="color:#a0a0a0;line-height:1.6;margin:0;"><strong>Navigation Menu:</strong> Use the left sidebar to navigate between different sections within a module. The top bar displays your current role and provides quick access to settings and logout.</p>
+          </div>
+        </div>
+
+        <!-- Section 4: Inventory Management -->
+        <div style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.3);border-radius:6px;margin-bottom:10px;">
+          <button class="manual-section-header" onclick="window.toggleManualSection(this)" style="width:100%;background:rgba(10,155,3,0.15);padding:15px 20px;border:none;color:#0a9b03;text-align:left;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:6px;transition:all 0.3s;">
+            <span style="font-size:16px;">4. Inventory Management</span>
+            <i class="fa-solid fa-chevron-down" style="font-size:12px;transition:transform 0.3s;"></i>
+          </button>
+          <div class="manual-section-content" style="display:none;padding:20px;border-top:1px solid rgba(10,155,3,0.3);">
+            <p style="color:#a0a0a0;line-height:1.6;margin:0 0 10px 0;"><strong>Tracking Stock:</strong> The system automatically captures daily stock snapshots at midnight. Stock levels are displayed in real-time and visualized in weekly charts. You can view historical trends and receive alerts when stock levels drop below thresholds.</p>
+            <p style="color:#a0a0a0;line-height:1.6;margin:0;"><strong>Stock Charts:</strong> The weekly stock chart shows trends over the last 7 days. Missing data points appear as gaps in the chart, indicating days with no stock activity.</p>
+          </div>
+        </div>
+
+        <!-- Section 5: Warehouse Management -->
+        <div style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.3);border-radius:6px;margin-bottom:10px;">
+          <button class="manual-section-header" onclick="window.toggleManualSection(this)" style="width:100%;background:rgba(10,155,3,0.15);padding:15px 20px;border:none;color:#0a9b03;text-align:left;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:6px;transition:all 0.3s;">
+            <span style="font-size:16px;">5. Warehouse Management</span>
+            <i class="fa-solid fa-chevron-down" style="font-size:12px;transition:transform 0.3s;"></i>
+          </button>
+          <div class="manual-section-content" style="display:none;padding:20px;border-top:1px solid rgba(10,155,3,0.3);">
+            <p style="color:#a0a0a0;line-height:1.6;margin:0 0 10px 0;"><strong>Managing Warehouses:</strong> Admins can create, edit, and delete warehouses. Each warehouse can have multiple staff members assigned and tracks inventory location.</p>
+            <p style="color:#a0a0a0;line-height:1.6;margin:0;"><strong>Staff Assignment:</strong> Assign warehouse staff to specific locations and manage their access permissions. Track deliveries and material movements between warehouses.</p>
+          </div>
+        </div>
+
+        <!-- Section 6: Purchasing Management -->
+        <div style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.3);border-radius:6px;margin-bottom:10px;">
+          <button class="manual-section-header" onclick="window.toggleManualSection(this)" style="width:100%;background:rgba(10,155,3,0.15);padding:15px 20px;border:none;color:#0a9b03;text-align:left;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:6px;transition:all 0.3s;">
+            <span style="font-size:16px;">6. Purchasing Management</span>
+            <i class="fa-solid fa-chevron-down" style="font-size:12px;transition:transform 0.3s;"></i>
+          </button>
+          <div class="manual-section-content" style="display:none;padding:20px;border-top:1px solid rgba(10,155,3,0.3);">
+            <p style="color:#a0a0a0;line-height:1.6;margin:0 0 10px 0;"><strong>Creating POs:</strong> Use the purchase order form to create new orders. Specify items, quantities, unit prices, and delivery dates. The system calculates total costs automatically.</p>
+            <p style="color:#a0a0a0;line-height:1.6;margin:0;"><strong>PO Tracking:</strong> Monitor purchase order status (pending, confirmed, delivered, cancelled). View vendor performance and budget allocation across departments.</p>
+          </div>
+        </div>
+
+        <!-- Section 7: Attendance Management -->
+        <div style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.3);border-radius:6px;margin-bottom:10px;">
+          <button class="manual-section-header" onclick="window.toggleManualSection(this)" style="width:100%;background:rgba(10,155,3,0.15);padding:15px 20px;border:none;color:#0a9b03;text-align:left;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:6px;transition:all 0.3s;">
+            <span style="font-size:16px;">7. Attendance Management</span>
+            <i class="fa-solid fa-chevron-down" style="font-size:12px;transition:transform 0.3s;"></i>
+          </button>
+          <div class="manual-section-content" style="display:none;padding:20px;border-top:1px solid rgba(10,155,3,0.3);">
+            <p style="color:#a0a0a0;line-height:1.6;margin:0 0 10px 0;"><strong>Recording Attendance:</strong> Employees clock in and out through the attendance module. The system automatically calculates hours worked and identifies late arrivals.</p>
+            <p style="color:#a0a0a0;line-height:1.6;margin:0;"><strong>Attendance Reports:</strong> Generate detailed reports showing present/absent counts, late arrivals, and attendance patterns. Admins can manually adjust records and add notes.</p>
+          </div>
+        </div>
+
+        <!-- Section 8: Admin Portal -->
+        <div style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.3);border-radius:6px;margin-bottom:10px;">
+          <button class="manual-section-header" onclick="window.toggleManualSection(this)" style="width:100%;background:rgba(10,155,3,0.15);padding:15px 20px;border:none;color:#0a9b03;text-align:left;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:6px;transition:all 0.3s;">
+            <span style="font-size:16px;">8. Admin Portal</span>
+            <i class="fa-solid fa-chevron-down" style="font-size:12px;transition:transform 0.3s;"></i>
+          </button>
+          <div class="manual-section-content" style="display:none;padding:20px;border-top:1px solid rgba(10,155,3,0.3);">
+            <p style="color:#a0a0a0;line-height:1.6;margin:0 0 10px 0;"><strong>User Management:</strong> Create, edit, and delete user accounts. Assign roles (admin, warehouse, purchasing, attendance) and manage user status (active/disabled).</p>
+            <p style="color:#a0a0a0;line-height:1.6;margin:0 0 10px 0;"><strong>Permissions & Restrictions:</strong> Set module-specific restrictions for individual users. Override default role permissions and create custom access policies.</p>
+            <p style="color:#a0a0a0;line-height:1.6;margin:0;"><strong>System Settings:</strong> Configure system-wide settings, view activity logs, and manage security policies.</p>
+          </div>
+        </div>
+
+        <!-- Section 9: Troubleshooting -->
+        <div style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.3);border-radius:6px;margin-bottom:10px;">
+          <button class="manual-section-header" onclick="window.toggleManualSection(this)" style="width:100%;background:rgba(10,155,3,0.15);padding:15px 20px;border:none;color:#0a9b03;text-align:left;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:6px;transition:all 0.3s;">
+            <span style="font-size:16px;">9. Troubleshooting</span>
+            <i class="fa-solid fa-chevron-down" style="font-size:12px;transition:transform 0.3s;"></i>
+          </button>
+          <div class="manual-section-content" style="display:none;padding:20px;border-top:1px solid rgba(10,155,3,0.3);">
+            <div style="background:rgba(255,107,107,0.1);padding:15px;border-radius:6px;margin-bottom:10px;border-left:4px solid #ff6b6b;">
+              <p style="color:#a0a0a0;margin:0;"><strong>Cannot log in:</strong> Verify your email and password. Contact your admin if your account is disabled or doesn't exist.</p>
+            </div>
+            <div style="background:rgba(255,107,107,0.1);padding:15px;border-radius:6px;margin-bottom:10px;border-left:4px solid #ff6b6b;">
+              <p style="color:#a0a0a0;margin:0;"><strong>No permission to access module:</strong> Your admin has restricted your access. Contact them to request module access.</p>
+            </div>
+            <div style="background:rgba(255,107,107,0.1);padding:15px;border-radius:6px;margin-bottom:10px;border-left:4px solid #ff6b6b;">
+              <p style="color:#a0a0a0;margin:0;"><strong>Stock data not updating:</strong> The system captures stock at midnight. Ensure your browser time is synced and data has been entered in the inventory.</p>
+            </div>
+            <div style="background:rgba(255,107,107,0.1);padding:15px;border-radius:6px;border-left:4px solid #ff6b6b;">
+              <p style="color:#a0a0a0;margin:0;"><strong>Data not syncing:</strong> Check your internet connection. Firebase requires stable connectivity for real-time updates.</p>
+            </div>
+          </div>
+        </div>
+
+        <div style="background:rgba(10,155,3,0.1);padding:15px;border-radius:6px;margin-top:15px;border:1px solid rgba(10,155,3,0.3);">
+          <p style="color:#a0a0a0;margin:0;"><strong>Need Help?</strong> Contact your system administrator or check the activity logs for error messages. Most issues can be resolved by refreshing the page or clearing browser cache.</p>
+        </div>
+      </div>
+    </div>
+
+  </section>
+</section>
+
+<!-- ATTENDANCE USERS PAGE -->
+<section id="attendance-users" class="page" style="display:none;">
+  <section class="inventory">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h2>Attendance - User Management</h2>
+      <button id="addAttendanceUserBtn" style="padding:12px 24px;background:#0a9b03;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:15px;display:flex;align-items:center;gap:8px;transition:all 0.3s;width:150px;">
+        <i class="fa-solid fa-plus"></i> Add User
+      </button>
+    </div>
+
+    <!-- Filter Section -->
+    <div class="filter-section" style="display:flex;gap:20px;margin-bottom:20px;">
+      <div class="filter-group" style="flex:1;">
+        <label for="department-filter" style="display:block;margin-bottom:8px;font-weight:600;color:#0a9b03;">Department/Sites</label>
+        <div style="position: relative;">
+          <input type="text" id="department-filter" placeholder="All Departments/Sites" class="filter-select" style="background-color: #0f1e35; border: 1px solid #1a3a5c; color: #e0e0e0; padding: 10px; border-radius: 4px; width: 100%;">
+          <ul id="department-filter-dropdown" style="position: absolute; top: 100%; left: 0; right: 0; background-color: #1a3a5c; border: 1px solid #1a3a5c; border-top: none; max-height: 200px; overflow-y: auto; list-style: none; margin: 0; padding: 0; display: none; z-index: 1000; border-radius: 0 0 4px 4px;"></ul>
+        </div>
+      </div>
+      <div class="filter-group" style="flex:1;">
+        <label for="designation-filter" style="display:block;margin-bottom:8px;font-weight:600;color:#0a9b03;">Designation</label>
+        <div style="position: relative;">
+          <input type="text" id="designation-filter" placeholder="All Designations" class="filter-select" style="background-color: #0f1e35; border: 1px solid #1a3a5c; color: #e0e0e0; padding: 10px; border-radius: 4px; width: 100%;">
+          <ul id="designation-filter-dropdown" style="position: absolute; top: 100%; left: 0; right: 0; background-color: #1a3a5c; border: 1px solid #1a3a5c; border-top: none; max-height: 200px; overflow-y: auto; list-style: none; margin: 0; padding: 0; display: none; z-index: 1000; border-radius: 0 0 4px 4px;"></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Collapsible Designations Section -->
+    <div style="margin-bottom: 20px; background-color: #0f1e35; border: 1px solid #1a3a5c; border-radius: 8px; overflow: hidden;">
+      <div style="width: 100%; padding: 15px; background-color: #0f1e35; display: flex; justify-content: space-between; align-items: center;">
+        <button id="designationsToggle" style="flex: 1; border: none; color: #1dd1a1; text-align: left; cursor: pointer; display: flex; align-items: center; font-weight: 600; font-size: 14px; background: none; padding: 0;" onmouseover="this.style.color='#10e493'" onmouseout="this.style.color='#1dd1a1'">
+          <span>▼ Designations <span id="designationsCount" style="color: #7a8fa6; font-size: 12px; margin-left: 8px;">(0)</span></span>
+        </button>
+        <button type="button" id="addDesignationBtn" class="btn-action" style="background-color: #1dd1a1; color: #0a1628; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px;">+ Add Designation</button>
+      </div>
+      <div id="designationsListContainer" style="display: none; padding: 15px; border-top: 1px solid #1a3a5c; max-height: 300px; overflow-y: auto;">
+        <div id="designationsList" style="display: flex; flex-wrap: wrap; gap: 10px;">
+          <p style="color: #7a8fa6;">No designations added yet</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Attendance Users Table -->
+    <div class="table-container">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background: rgba(10, 155, 3, 0.1);">
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">Name</th>
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">LTISC Tagging</th>
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">Email</th>
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">Department/Site</th>
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">Designation</th>
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">Status</th>
+            <th style="padding:12px; text-align:left; color:#0a9b03; border-bottom:2px solid #0a9b03;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="attendanceUserBody">
+          <tr style="border-bottom:1px solid rgba(10, 155, 3, 0.2);">
+            <td colspan="7" style="text-align:center; padding:30px; color:#a0a0a0;">No users yet.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</section>
+
+<!-- WAREHOUSE MODAL -->
+<div id="warehouseModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 id="warehouseModalTitle">Add Warehouse</h2>
+      <button id="closeWarehouseModal" class="close-btn">&times;</button>
+    </div>
+    <form id="warehouseForm">
+      <div class="form-group">
+        <label>Warehouse Name *</label>
+        <input type="text" id="whName" placeholder="Enter warehouse name" required>
+      </div>
+      <div class="form-group">
+        <label>Warehouse Code *</label>
+        <input type="text" id="whCode" placeholder="e.g., wh1, wh2" required>
+      </div>
+      <div class="form-group">
+        <label>Location</label>
+        <input type="text" id="whLocation" placeholder="Enter location/address">
+      </div>
+      <div style="display:flex;gap:10px;margin-top:20px;">
+        <button type="button" id="saveWarehouseBtn" class="btn-primary">Save Warehouse</button>
+        <button type="button" id="cancelWarehouseBtn" class="btn-secondary">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+</main>
+
+<!-- USER PROFILE MODAL -->
+<div id="userProfileModal" class="modal" style="display:none;">
+  <div class="modal-content" style="max-width:500px;">
+    <div class="modal-header">
+      <h2>My Account</h2>
+      <button id="closeProfileModal" class="close-btn">&times;</button>
+    </div>
+    
+    <div style="padding:20px;">
+      <!-- Profile Header with Avatar -->
+      <div style="text-align:center;margin-bottom:30px;">
+        <div style="width:100px;height:100px;border-radius:50%;background:linear-gradient(135deg,#0a9b03,#1dd1a1);display:flex;align-items:center;justify-content:center;margin:0 auto 15px;font-size:40px;color:white;font-weight:bold;">
+          <span id="profileInitial">A</span>
+        </div>
+        <h3 id="profileName" style="margin:0;color:#e0e0e0;">User Name</h3>
+        <p id="profileRole" style="margin:5px 0 0 0;color:#0a9b03;font-size:12px;font-weight:600;">ROLE</p>
+      </div>
+
+      <!-- User Information -->
+      <div style="background:rgba(10,155,3,0.1);padding:20px;border-radius:8px;border:1px solid rgba(10,155,3,0.3);">
+        <div style="margin-bottom:20px;">
+          <label style="display:block;color:#0a9b03;font-weight:600;font-size:12px;margin-bottom:5px;"><i class="fa-solid fa-envelope"></i> EMAIL</label>
+          <p id="profileEmail" style="margin:0;color:#e0e0e0;word-break:break-all;">user@example.com</p>
+        </div>
+
+        <div style="margin-bottom:20px;">
+          <label style="display:block;color:#0a9b03;font-weight:600;font-size:12px;margin-bottom:5px;"><i class="fa-solid fa-briefcase"></i> ROLE</label>
+          <p id="profileRoleFull" style="margin:0;color:#e0e0e0;">Administrator</p>
+        </div>
+
+        <div style="margin-bottom:20px;">
+          <label style="display:block;color:#0a9b03;font-weight:600;font-size:12px;margin-bottom:5px;"><i class="fa-solid fa-building"></i> DEPARTMENT</label>
+          <p id="profileDepartment" style="margin:0;color:#e0e0e0;">N/A</p>
+        </div>
+
+        <div style="margin-bottom:20px;">
+          <label style="display:block;color:#0a9b03;font-weight:600;font-size:12px;margin-bottom:5px;"><i class="fa-solid fa-tag"></i> TAGGING</label>
+          <p id="profileTagging" style="margin:0;color:#e0e0e0;">N/A</p>
+        </div>
+
+        <div style="margin-bottom:0;">
+          <label style="display:block;color:#0a9b03;font-weight:600;font-size:12px;margin-bottom:5px;"><i class="fa-solid fa-shield"></i> STATUS</label>
+          <p id="profileStatus" style="margin:0;color:#1dd1a1;"><i class="fa-solid fa-circle"></i> Active</p>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-top:20px;">
+        <button id="closeProfileBtn" type="button" style="flex:1;padding:12px 24px;background:#ff6b6b;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:15px;transition:all 0.3s;">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="admin.js"></script>
+</body>
+</html>

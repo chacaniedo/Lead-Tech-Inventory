@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LTISC AMS - Employee Dashboard</title>
+    <link rel="stylesheet" href="employee-dashboard.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Leaflet Map Library -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <!-- Chart.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+</head>
+<body>
+    <!-- Top Bar Header -->
+    <header class="topbar">
+        <div class="topbar-left">
+            <button class="menu-icon" id="menuBtn">☰</button>
+            <h2>LTISC Attendance System</h2>
+        </div>
+        <div class="topbar-right">
+            <span id="currentUserRole" class="user-role">Employee</span>
+            <button id="logoutBtn" class="btn-logout">Logout</button>
+        </div>
+    </header>
+    <div class="container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+        
+            
+            <nav class="sidebar-nav">
+                <!-- Main Section -->
+                <div class="main-section">
+                    <h3 class="section-title">MAIN</h3>
+                    
+                    <!-- Attendance Subsystem -->
+                    <div class="subsystem">
+                        <h4 class="subsystem-title">ATTENDANCE</h4>
+                        <ul class="module-list">
+                            <li>
+                                <a href="#dashboard" class="nav-item active" data-module="dashboard">
+                                    <span class="icon"><i class="fa-solid fa-house"></i></span>
+                                    <span>Dashboard</span>
+                                </a>
+                            </li>
+                           
+                            <li>
+                                <a href="#attendance" class="nav-item" data-module="attendance">
+                                    <span class="icon"><i class="fa-solid fa-clock"></i></span>
+                                    <span>Attendance</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="#my-records" class="nav-item" data-module="my-records">
+                                    <span class="icon"><i class="fa-solid fa-file"></i></span>
+                                    <span>My Records</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="#my-profile" class="nav-item" data-module="my-profile">
+                                    <span class="icon"><i class="fa-solid fa-user"></i></span>
+                                    <span>My Profile</span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </nav>
+        </aside>
+
+
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Content Area -->
+            <div class="content">
+                <!-- Dashboard Module -->
+                <div id="dashboard" class="module-content active">
+                    <div class="dashboard-welcome">
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                            <span id="ltiscTag" style="background: #1dd1a1; color: #0a1628; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold;">LOADING...</span>
+                            <span id="employeeSite" style="color: #ffffff; font-size: 13px;">Site: Loading...</span>
+                        </div>
+                        <h1>
+                            Hi, <span id="employeeName">Loading...</span>! 
+                        </h1>
+                        <p>Welcome back to your attendance dashboard</p>
+                    </div>
+
+                    <div class="dashboard-body">
+                        
+                        <!-- Container 1: Monthly Statistics -->
+                        <div class="dashboard-container">
+                            <div class="container-title">
+                                <h3>This Month Overview</h3>
+                            </div>
+                            <div class="stats-grid">
+                                <div class="stat-card stat-present">
+                                    <div class="stat-icon">✓</div>
+                                    <div class="stat-content">
+                                        <div class="stat-label">Present Days</div>
+                                        <div class="stat-value" id="dashboardPresentDays">0</div>
+                                    </div>
+                                </div>
+                                <div class="stat-card stat-absent">
+                                    <div class="stat-icon">✗</div>
+                                    <div class="stat-content">
+                                        <div class="stat-label">Absent Days</div>
+                                        <div class="stat-value" id="dashboardAbsentDays">0</div>
+                                    </div>
+                                </div>
+                                <div class="stat-card stat-late">
+                                    <div class="stat-icon">⏱</div>
+                                    <div class="stat-content">
+                                        <div class="stat-label">Late Arrivals</div>
+                                        <div class="stat-value" id="dashboardLateDays">0</div>
+                                    </div>
+                                </div>
+                                <div class="stat-card stat-hours">
+                                    <div class="stat-icon">⏰</div>
+                                    <div class="stat-content">
+                                        <div class="stat-label">Hours Worked</div>
+                                        <div class="stat-value" id="dashboardTotalHours">0h</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Container 2: Weekly Hours Chart -->
+                        <div class="dashboard-container">
+                            <div class="container-title">
+                                <h3>Weekly Hours</h3>
+                            </div>
+                            <div class="chart-container" style="position: relative; height: 250px;">
+                                <canvas id="weeklyHoursChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Container 3: Performance Metrics (Left) and Quick Access (Right) -->
+                        <div class="actions-announcements-wrapper">
+                            <!-- Performance Metrics -->
+                            <div class="dashboard-container">
+                                <div class="container-title">
+                                    <h3 style="color: #1dd1a1;">Performance Metrics</h3>
+                                </div>
+                                <div class="performance-metrics-card">
+                                    <div class="metrics-header">
+                                        <h4>Punctuality Rate</h4>
+                                        <div class="punctuality-rate" id="punctualityRate">0%</div>
+                                        <div class="metrics-bar"></div>
+                                    </div>
+                                    <div class="metrics-list">
+                                        <div class="metric-item">
+                                            <div class="metric-icon">
+                                                <i class="fa-solid fa-thumbs-up"></i>
+                                            </div>
+                                            <div class="metric-label">Good Performance</div>
+                                        </div>
+                                        <div class="metric-item">
+                                            <div class="metric-icon">
+                                                <i class="fa-solid fa-clock"></i>
+                                            </div>
+                                            <div class="metric-label">Avg <span id="avgOvertime">0h</span>/day</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Quick Access -->
+                            <div class="dashboard-container">
+                                <div class="container-title">
+                                    <h3>Quick Actions</h3>
+                                </div>
+                                <div class="quick-actions-grid">
+                                    <button class="action-btn" id="quickViewRecordsBtn">
+                                        <span class="action-icon">📋</span>
+                                        <span class="action-label">View Records</span>
+                                    </button>
+                                    <button class="action-btn" id="quickViewProfileBtn">
+                                        <span class="action-icon">👤</span>
+                                        <span class="action-label">My Profile</span>
+                                    </button>
+                                    <button class="action-btn" id="quickRefreshBtn">
+                                        <span class="action-icon">🔄</span>
+                                        <span class="action-label">Refresh Data</span>
+                                    </button>
+                                    <button class="action-btn" id="quickLocationBtn">
+                                        <span class="action-icon">⏱️</span>
+                                        <span class="action-label">Attendance</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Container 4: Announcements -->
+                        <div class="dashboard-container">
+                            <div class="container-title">
+                                <h3>Announcements</h3>
+                            </div>
+                            <div class="announcements-list" id="employeeAnnouncementsList">
+                                <div style="text-align: center; padding: 30px; color: #7a8fa6;">
+                                    <p>No announcements at the moment</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+                <!-- Attendance Module -->
+                <div id="attendance" class="module-content">
+                    <div class="attendance-header">
+                        <h2>Daily Attendance</h2>
+                        <span id="attendanceDate" class="current-date"></span>
+                    </div>
+
+                    <!-- Main Attendance Card -->
+                    <div class="attendance-card-main">
+                        <!-- Digital Clock Display -->
+                        <div class="clock-display">
+                            <div class="clock-wrapper">
+                                <canvas id="analogClock" width="200" height="200"></canvas>
+                                <div class="digital-time" id="digitalTime">00:00:00</div>
+                            </div>
+                        </div>
+
+                        <!-- Attendance Status -->
+                        <div class="attendance-status-panel">
+                            <div class="status-item status-in">
+                                <div class="status-icon"><i class="fa-solid fa-arrow-right-to-bracket"></i></div>
+                                <div class="status-info">
+                                    <span class="status-label">Clock In</span>
+                                    <span class="status-time" id="clockInDisplay">--:--</span>
+                                    <span class="status-date" id="clockInDate">Not marked</span>
+                                </div>
+                            </div>
+
+                            <div class="status-divider"></div>
+
+                            <div class="status-item status-out">
+                                <div class="status-icon"><i class="fa-solid fa-arrow-right-from-bracket"></i></div>
+                                <div class="status-info">
+                                    <span class="status-label">Clock Out</span>
+                                    <span class="status-time" id="clockOutDisplay">--:--</span>
+                                    <span class="status-date" id="clockOutDate">Not marked</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="attendance-actions">
+                            <button class="attendance-btn btn-clock-in" id="mainClockInBtn" title="Mark attendance">
+                                <span class="btn-icon"><i class="fa-solid fa-play"></i></span>
+                                <span class="btn-label">Time in</span>
+                            </button>
+                            <button class="attendance-btn btn-lunch-out" id="lunchOutBtn" title="Start lunch break" disabled>
+                                <span class="btn-icon"><i class="fa-solid fa-bowl-food"></i></span>
+                                <span class="btn-label">Lunch out</span>
+                            </button>
+                            <button class="attendance-btn btn-lunch-in" id="lunchInBtn" title="End lunch break" disabled>
+                                <span class="btn-icon"><i class="fa-solid fa-utensils"></i></span>
+                                <span class="btn-label">Lunch in</span>
+                            </button>
+                            <button class="attendance-btn btn-clock-out" id="mainClockOutBtn" title="Mark departure" disabled>
+                                <span class="btn-icon"><i class="fa-solid fa-stop"></i></span>
+                                <span class="btn-label">Time out</span>
+                            </button>
+                        </div>
+
+                        <!-- Location & Details -->
+                        <div class="attendance-details">
+                            <div class="detail-item">
+                                <span class="detail-label"><i class="fa-solid fa-location-dot"></i>Location</span>
+                                <span class="detail-value" id="locationDistance">Checking...</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label"><i class="fa-solid fa-hourglass"></i> Hours Today</span>
+                                <span class="detail-value" id="hoursWorked">0h 0m</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label"><i class="fa-solid fa-bowl-food"></i> Lunch Out</span>
+                                <span class="detail-value" id="lunchOutDisplay">--:--</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label"><i class="fa-solid fa-utensils"></i> Lunch In</span>
+                                <span class="detail-value" id="lunchInDisplay">--:--</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label"><i class="fa-solid fa-circle-info"></i> Status</span>
+                                <span class="detail-value status-badge" id="attendanceStatus">Pending</span>
+                            </div>
+                            <div class="detail-item">
+                                <button class="detail-refresh-btn" id="refreshLocationBtn" title="Refresh GPS location">
+                                    <i class="fa-solid fa-arrows-rotate"></i> Refresh Location
+                                </button>
+                            </div>
+                            <div class="detail-item">
+                                <button class="detail-refresh-btn" id="getLocationBtn" title="Get GPS location again">
+                                    <i class="fa-solid fa-location-crosshairs"></i> Get Location
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Manual Location Modal -->
+                        <div id="manualLocationModal" class="modal">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h2>Manual Location Input</h2>
+                                    <button class="modal-close" id="closeManualLocationModal">&times;</button>
+                                </div>
+                                <div class="modal-form">
+                                    <p style="color: #7a8fa6; margin-bottom: 15px; font-size: 13px;">Get your coordinates from Google Maps (right-click on your location)</p>
+                                    <div class="form-group">
+                                        <label for="manualLatitude">Latitude:</label>
+                                        <input type="number" id="manualLatitude" step="0.000001" placeholder="e.g., 14.092314514602707" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="manualLongitude">Longitude:</label>
+                                        <input type="number" id="manualLongitude" step="0.000001" placeholder="e.g., 121.15590798456493" required>
+                                    </div>
+                                    <div class="form-actions">
+                                        <button type="button" class="btn-submit" id="confirmManualLocationBtn">Update Location</button>
+                                        <button type="button" class="btn-cancel" id="cancelManualLocationBtn">Cancel</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Camera Capture Modal -->
+                        <div id="cameraModal" class="modal">
+                            <div class="modal-content camera-modal-content">
+                                <div class="modal-header">
+                                    <h2 id="cameraModalTitle">Take Photo for Check-In</h2>
+                                    <button class="modal-close" id="closeCameraModal">&times;</button>
+                                </div>
+                                <div class="modal-form" style="padding: 20px;">
+                                    <!-- Camera Preview -->
+                                    <div id="cameraPreviewContainer" style="display: none; margin-bottom: 15px;">
+                                        <video id="cameraPreview" autoplay playsinline muted style="width: 100%; border-radius: 8px; background: #000; transform: scaleX(-1);"></video>
+                                    </div>
+                                    <!-- Captured Photo -->
+                                    <div id="capturedPhotoContainer" style="display: none; margin-bottom: 15px; text-align: center;">
+                                        <img id="capturedPhoto" style="max-width: 100%; border-radius: 8px; max-height: 300px;">
+                                    </div>
+                                    <!-- Status Message -->
+                                    <div id="cameraStatus" style="text-align: center; color: #1dd1a1; margin-bottom: 15px; font-size: 13px;"></div>
+                                    <!-- Camera Controls -->
+                                    <div class="form-actions" style="justify-content: center; gap: 10px;">
+                                        <button type="button" class="btn-submit" id="startCameraBtn" style="display: none;">Open Camera</button>
+                                        <button type="button" class="btn-submit" id="capturePhotoBtn" style="display: none;">📸 Take Photo</button>
+                                        <button type="button" class="btn-submit" id="retakeCameraBtn" style="display: none;">Retake Photo</button>
+                                        <button type="button" class="btn-submit" id="uploadPhotoBtn" style="display: none;">✓ Confirm & Continue</button>
+                                        <button type="button" class="btn-cancel" id="cancelCameraBtn">Skip for Now</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Location Map -->
+                        <div class="location-map-section" id="locationMapSection">
+                            <button class="map-toggle-btn" id="mapToggleBtn" title="Toggle map visibility">
+                                <i class="fa-solid fa-map"></i> Hide Map
+                            </button>
+                            <div id="locationMap" class="location-map"></div>
+                            <div class="map-legend">
+                                <div class="legend-item">
+                                    <span class="legend-icon office"></span>
+                                    <span id="workLocationLegendLabel">Work Location</span>
+                                </div>
+                                <div class="legend-item">
+                                    <span class="legend-icon employee"></span>
+                                    <span>Your Location</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Compact History & Calendar Toggle -->
+                    <div class="attendance-compact-section">
+                        <div class="compact-tabs">
+                            <button class="compact-tab-btn active" data-tab="week">
+                                <i class="fa-solid fa-calendar-week"></i>
+                                This Week
+                            </button>
+                            <button class="compact-tab-btn" data-tab="month">
+                                <i class="fa-solid fa-calendar"></i>
+                                This Month
+                            </button>
+                        </div>
+
+                        <!-- Weekly View -->
+                        <div class="compact-content active" id="weekTab">
+                            <div class="weekly-grid" id="weeklyGrid">
+                                <div class="week-loader">Loading attendance history...</div>
+                            </div>
+                        </div>
+
+                        <!-- Monthly Calendar View -->
+                        <div class="compact-content" id="monthTab">
+                            <div class="calendar-container" id="calendarContainer">
+                                <div class="calendar-loader">Loading calendar...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+
+                <!-- My Records Module -->
+
+                <div id="my-records" class="module-content">
+                    <div class="module-header">
+                        <h2>My Attendance Records</h2>
+                    </div>
+
+                    <div class="records-container">
+                        <!-- Records Summary -->
+                        <div class="records-summary">
+                            <div class="summary-card">
+                                <div class="summary-icon">✓</div>
+                                <div class="summary-content">
+                                    <h4>Total Present Days</h4>
+                                    <p class="summary-value" id="totalPresentDays">0</p>
+                                </div>
+                            </div>
+
+                            <div class="summary-card">
+                                <div class="summary-icon">✕</div>
+                                <div class="summary-content">
+                                    <h4>Total Absent Days</h4>
+                                    <p class="summary-value" id="totalAbsentDays">0</p>
+                                </div>
+                            </div>
+
+                            <div class="summary-card">
+                                <div class="summary-icon">⏱</div>
+                                <div class="summary-content">
+                                    <h4>Late Arrivals</h4>
+                                    <p class="summary-value" id="totalLateDays">0</p>
+                                </div>
+                            </div>
+
+                            <div class="summary-card">
+                                <div class="summary-icon">📋</div>
+                                <div class="summary-content">
+                                    <h4>Total Days</h4>
+                                    <p class="summary-value" id="totalDays">0</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Attendance Table -->
+                        <div class="records-table-container">
+                            <h3>My Attendance Records</h3>
+                            <div class="table-controls">
+                                <div class="filter-controls">
+                                    <label for="recordsMonthFilter">Filter by Month:</label>
+                                    <input type="month" id="recordsMonthFilter" class="filter-input">
+                                    <button id="filterBtn" class="btn-filter">Filter</button>
+                                </div>
+                            </div>
+
+                            <div class="records-table-wrapper">
+                                <table class="records-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Day</th>
+                                            <th>Clock In</th>
+                                            <th>Clock Out</th>
+                                            <th>Hours Worked</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="recordsTableBody">
+                                        <tr class="placeholder-row">
+                                            <td colspan="6" class="text-center">No attendance records found</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+
+                <!-- My Profile Module -->
+                <div id="my-profile" class="module-content">
+                    <div class="module-header">
+                        <h2 id="page-title">My Profile</h2>
+                    </div>
+
+                    <!-- Basic Information Container -->
+                    <div class="profile-container">
+                        <div class="profile-section">
+                            <h3 class="section-header">Basic Information</h3>
+                            
+                            <div class="profile-form">
+                                <div class="form-group">
+                                    <label for="fullName">Full Name:</label>
+                                    <input type="text" id="fullName" readonly class="form-control-readonly">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="ltiscTagging">LTISC Tagging:</label>
+                                    <input type="text" id="ltiscTagging" readonly class="form-control-readonly">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="departmentSite">Department/Sites:</label>
+                                    <input type="text" id="departmentSite" readonly class="form-control-readonly">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="assignedDesignation">Assigned Designation:</label>
+                                    <input type="text" id="assignedDesignation" readonly class="form-control-readonly">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="currentEmail">Current Email:</label>
+                                    <input type="email" id="currentEmail" readonly class="form-control-readonly">
+                                </div>
+                            </div>
+
+                            <div class="profile-actions">
+                                <button id="editProfileBtn" class="btn-primary">Edit Profile</button>
+                            </div>
+                        </div>
+
+                        <!-- Password Container -->
+                        <div class="profile-section">
+                            <h3 class="section-header">Password</h3>
+                            
+                            <div class="profile-form">
+                                <div class="form-group">
+                                    <label for="currentPassword">Current Password:</label>
+                                    <input type="password" id="currentPassword" readonly class="form-control-readonly">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="newPassword">New Password:</label>
+                                    <input type="password" id="newPassword" readonly class="form-control-readonly">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="confirmPassword">Confirm Password:</label>
+                                    <input type="password" id="confirmPassword" readonly class="form-control-readonly">
+                                </div>
+                            </div>
+
+                            <div class="profile-actions">
+                                <button id="editPasswordBtn" class="btn-primary">Change Password</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Leaflet Map Script -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script type="module" src="employee-dashboard.js"></script>
+
+
+
+                                <!-- MODAL CODES HERE -->
+                                 
+
+    <!-- Generic Confirmation Modal -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="confirmTitle">Confirm Action</h2>
+                <button class="modal-close" id="closeConfirmModal">&times;</button>
+            </div>
+            <div class="modal-form" style="padding: 30px; text-align: center;">
+                <p id="confirmMessage" style="font-size: 16px; color: #e0e0e0; margin-bottom: 30px;"></p>
+                <div class="form-actions" style="justify-content: center; gap: 15px;">
+                    <button type="button" class="btn-submit" id="confirmYesBtn">Yes, Confirm</button>
+                    <button type="button" class="btn-cancel" id="confirmNoBtn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Generic Message Modal -->
+    <div id="messageModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="messageTitle">Message</h2>
+                <button class="modal-close" id="closeMessageModal">&times;</button>
+            </div>
+            <div class="modal-form" style="padding: 30px; text-align: center;">
+                <p id="messageText" style="font-size: 16px; color: #e0e0e0; margin-bottom: 30px;"></p>
+                <div class="form-actions" style="justify-content: center; gap: 15px;">
+                    <button type="button" class="btn-submit" id="messageOkBtn">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
+<!-- Edit Profile Modal -->
+<div id="editProfileModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Edit Profile</h2>
+            <button class="modal-close" id="closeEditProfileModal">&times;</button>
+        </div>
+        <form id="editProfileForm" class="modal-form">
+            <div class="form-group">
+                <label for="editFullName">Full Name:</label>
+                <input type="text" id="editFullName" name="editFullName" required>
+            </div>
+
+            <div class="form-group">
+                <label for="editLtiscTagging">LTISC Tagging:</label>
+                <input type="text" id="editLtiscTagging" name="editLtiscTagging" readonly>
+            </div>
+
+            <div class="form-group">
+                <label for="editDepartmentSite">Department/Sites:</label>
+                <select id="editDepartmentSite" name="editDepartmentSite" required>
+                    <option value="">Select Department/Site</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="editAssignedDesignation">Assigned Designation:</label>
+                <select id="editAssignedDesignation" name="editAssignedDesignation" required>
+                    <option value="">Select Designation</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="editCurrentEmail">Current Email:</label>
+                <input type="email" id="editCurrentEmail" name="editCurrentEmail" required>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn-submit">Save Changes</button>
+                <button type="button" class="btn-cancel" id="cancelEditProfileBtn">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Change Password Modal -->
+<div id="changePasswordModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Change Password</h2>
+            <button class="modal-close" id="closeChangePasswordModal">&times;</button>
+        </div>
+        <form id="changePasswordForm" class="modal-form">
+            <div class="form-group">
+                <label for="modalCurrentPassword">Current Password:</label>
+                <input type="password" id="modalCurrentPassword" name="modalCurrentPassword" required>
+            </div>
+
+            <div class="form-group">
+                <label for="modalNewPassword">New Password:</label>
+                <input type="password" id="modalNewPassword" name="modalNewPassword" required>
+            </div>
+
+            <div class="form-group">
+                <label for="modalConfirmPassword">Confirm Password:</label>
+                <input type="password" id="modalConfirmPassword" name="modalConfirmPassword" required>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn-submit">Save Password</button>
+                <button type="button" class="btn-cancel" id="cancelChangePasswordBtn">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Logout Confirmation Modal -->
+<div id="logoutConfirmModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Logout</h2>
+            <button class="modal-close" id="closeLogoutModal">&times;</button>
+        </div>
+        <div class="modal-form" style="padding: 30px; text-align: center;">
+            <p style="font-size: 16px; color: #e0e0e0; margin-bottom: 30px;">Are you sure you want to logout?</p>
+            <div class="form-actions" style="justify-content: center; gap: 15px;">
+                <button type="button" class="btn-submit" id="confirmLogoutBtn">Yes, Logout</button>
+                <button type="button" class="btn-cancel" id="cancelLogoutBtn">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>

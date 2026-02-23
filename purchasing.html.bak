@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LTISC Purchasing</title>
+    <link rel="stylesheet" href="purchasing.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <!-- Chart.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- SheetJS Library for Excel Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <!-- Main JavaScript File -->
+    <script type="module" src="purchasing.js"></script>
+</head>
+<body>
+
+<!-- Main Application Content (User already logged in from main portal) -->
+<div id="appContent">
+
+<!-- Notification Toast Container -->
+<div id="notificationContainer" style="position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;"></div>
+
+<header class="topbar">
+  <div class="left">
+    <span class="menu-icon" id="menuBtn">☰</span>
+    <h2>LTISC Purchasing</h2>
+  </div>
+  <div style="display:flex; gap:20px; align-items:center;">
+    <button id="currentUserRole" class="user-role" style="background:rgba(10, 155, 3, 0.2);color:#0a9b03;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid #0a9b03;cursor:pointer;transition:all 0.3s;">PURCHASING</button>
+    <button id="backBtn" class="btn-back">
+      <i class="fa-solid fa-arrow-left"></i> Go Back
+    </button>
+  </div>
+</header>
+
+<nav class="sidebar" id="sidebar">
+  <div class="nav-section">
+    <span class="nav-section-title">MAIN</span>
+    <a class="nav-link active" data-page="dashboard" onclick="showDashboardPage(); closeSidebar();">
+      <i class="fa-solid fa-chart-pie"></i><span>Dashboard</span>
+    </a>
+    <a class="nav-link" data-page="purchase-tracking" onclick="showPurchaseTrackingPage(); closeSidebar();">
+      <i class="fa-solid fa-file-invoice-dollar"></i><span>Purchase Order Tracking</span>
+    </a>
+  </div>
+
+  <div class="nav-section">
+    <span class="nav-section-title">ADMIN</span>
+    <a class="nav-link" data-page="settings" onclick="showSettingsPage(); closeSidebar();">
+      <i class="fa-solid fa-gear"></i><span>Settings</span>
+    </a>
+  </div>
+
+  <button id="logoutBtn" class="logout-btn" style="width:calc(100% - 32px);padding:12px 16px;display:flex;align-items:center;gap:10px;justify-content:center;margin:auto;position:absolute;bottom:20px;left:20px;right:20px;">
+    <i class="fa-solid fa-sign-out-alt"></i> Logout
+  </button>
+</nav>
+
+    <main class="dashboard">
+        <!-- Dashboard Page -->
+        <div id="dashboardPage" class="page-section" style="display: block;">
+            <div class="dashboard-container">
+                <!-- Overview Section -->
+                <section class="summary">
+                    <div class="summary-card clickable-card" onclick="showProjectsPage()" style="cursor:pointer;">
+                        <h3>Total Projects</h3>
+                        <p id="totalProjectsCount">0</p>
+                        <p style="font-size:12px;color:#a0a0a0;margin-top:8px;">Ongoing projects</p>
+                    </div>
+
+                    <div class="summary-card clickable-card" onclick="showOngoingOrdersPage()" style="cursor:pointer;">
+                        <h3>Ongoing Orders</h3>
+                        <p style="font-size:12px;color:#0a9b03;font-weight:600;margin-top:8px;">Materials in transit</p>
+                    </div>
+
+                    <div class="summary-card clickable-card" onclick="showPaymentAlertsPage()" style="cursor:pointer; background: rgba(139, 69, 19, 0.3); border: 1px solid rgba(255, 165, 0, 0.3);">
+                        <h3 style="color: #ff9800; font-weight: 700; margin-bottom: 12px;">PAYMENT ALERTS</h3>
+                        <p id="paymentAlertCount" style="font-size: 32px; color: #0a9b03; font-weight: 700; margin: 12px 0;">0</p>
+                        <p style="font-size: 12px; color: #a0a0a0; margin-bottom: 16px;">Items with payment terms ending soon</p>
+                    </div>
+                </section>
+
+                <!-- Charts Section (Two columns) -->
+                <section class="charts-grid">
+                    <!-- Projects by Trade Section (Pie Chart) -->
+                    <div class="inventory" style="flex: 0 0 35%;">
+                        <h2>PROJECTS BY TRADE</h2>
+
+                        <div class="chart-container">
+                            <canvas id="projectsTradeChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Top Suppliers Section (Bar Chart) -->
+                    <div class="top-suppliers-section top-suppliers-container">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                            <h2 style="margin-bottom: 0; font-size: 18px; color: #1dd1a1;">TOP SUPPLIERS</h2>
+                            <div style="position: relative;">
+                                <button id="suppliersTimeFilterBtn" class="suppliers-time-btn" style="padding: 8px 16px; background: rgba(10, 155, 3, 0.15); color: #0a9b03; border: 1px solid #0a9b03; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 8px;" onclick="toggleSuppliersTimeDropdown()">
+                                    <span id="suppliersTimeBtnText">All-Time</span>
+                                    <span style="font-size: 10px;">▼</span>
+                                </button>
+                                <div id="suppliersTimeDropdown" style="display: none; position: absolute; top: 100%; right: 0; background: #1a3a52; border: 1px solid rgba(10, 155, 3, 0.5); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); z-index: 1000; min-width: 150px; margin-top: 5px; max-height: 300px; overflow-y: auto;">
+                                    <button onclick="selectSuppliersTimeScope('all-time')" style="width: 100%; padding: 12px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 13px; transition: background 0.2s; border-bottom: 1px solid rgba(10, 155, 3, 0.2);">
+                                        All-Time
+                                    </button>
+                                    <button onclick="selectSuppliersTimeScope('2030')" style="width: 100%; padding: 12px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 13px; transition: background 0.2s; border-bottom: 1px solid rgba(10, 155, 3, 0.2);">
+                                        2030
+                                    </button>
+                                    <button onclick="selectSuppliersTimeScope('2029')" style="width: 100%; padding: 12px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 13px; transition: background 0.2s; border-bottom: 1px solid rgba(10, 155, 3, 0.2);">
+                                        2029
+                                    </button>
+                                    <button onclick="selectSuppliersTimeScope('2028')" style="width: 100%; padding: 12px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 13px; transition: background 0.2s; border-bottom: 1px solid rgba(10, 155, 3, 0.2);">
+                                        2028
+                                    </button>
+                                    <button onclick="selectSuppliersTimeScope('2027')" style="width: 100%; padding: 12px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 13px; transition: background 0.2s; border-bottom: 1px solid rgba(10, 155, 3, 0.2);">
+                                        2027
+                                    </button>
+                                    <button onclick="selectSuppliersTimeScope('2026')" style="width: 100%; padding: 12px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 13px; transition: background 0.2s; border-bottom: 1px solid rgba(10, 155, 3, 0.2);">
+                                        2026
+                                    </button>
+                                    <button onclick="selectSuppliersTimeScope('2025')" style="width: 100%; padding: 12px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 13px; transition: background 0.2s;">
+                                        2025
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="suppliers-chart-container">
+                            <canvas id="topSuppliersChart"></canvas>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- Purchase Tracking Page -->
+        <div id="purchaseTrackingPage" class="page-section" style="display: none;">
+            <div class="page-header">
+                <h1 class="page-title">Purchase Order Tracking</h1>
+            </div>
+
+            <div class="content-section">
+                <!-- Search and Filter Container -->
+                <div class="tracking-control-container" style="display: flex; justify-content: space-between; align-items: center;">
+                    <!-- Search Section -->
+                    <div class="search-section">
+                        <input type="text" id="searchInput" class="search-input" placeholder="Search tracking...">
+                        <button class="search-btn" onclick="searchTracking()">🔍 Search</button>
+                    </div>
+                    <!-- Right Side Controls -->
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <select id="statusFilterDropdown" style="padding: 10px 15px; background: rgba(10, 155, 3, 0.1); color: #0a9b03; border: 1px solid rgba(10, 155, 3, 0.4); border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 14px;" onchange="filterTrackingByStatusDropdown(this.value)">
+                            <option value="all">All Status</option>
+                            <option value="completed">Completed</option>
+                            <option value="on-going">On-Going</option>
+                            <option value="cancelled">Cancelled</option>
+                            <option value="hold">Hold</option>
+                        </select>
+                        <div style="position: relative; display: inline-block;">
+                            <button onclick="toggleExportDropdown()" class="btn-actions" style="background: linear-gradient(135deg, #0a9b03 0%, #15c524 100%); color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s; display: flex; align-items: center; gap: 8px;">
+                                <span>⬇ Export</span>
+                                <span style="font-size: 10px;">▼</span>
+                            </button>
+                            <div id="exportDropdown" style="display: none; position: absolute; top: 100%; right: 0; background: #1a3a52; border: 1px solid rgba(10, 155, 3, 0.5); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); z-index: 1000; min-width: 150px; margin-top: 5px;">
+                                <button onclick="exportTrackingDataAsExcel()" style="width: 100%; padding: 12px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 14px; transition: background 0.2s; border-bottom: 1px solid rgba(10, 155, 3, 0.2);">
+                                    📊 Export as EXCEL
+                                </button>
+                                <button onclick="exportTrackingDataAsPDF()" style="width: 100%; padding: 12px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 14px; transition: background 0.2s;">
+                                    📄 Export as PDF
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Data Table -->
+                <div class="table-wrapper">
+                    <table class="data-table" id="materials-table">
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th>Month</th>
+                                <th>Client</th>
+                                <th>Project Name</th>
+                                <th>Trade</th>
+                                <th>MR #</th>
+                                <th>MR Date</th>
+                                <th>P.O Date</th>
+                                <th>P.O No.</th>
+                                <th>Vendors</th>
+                                <th>P.O Amount</th>
+                                <th>Paid Amount</th>
+                                <th>Balance Due</th>
+                                <th>Payment Status</th>
+                                <th>Delivery Status</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tracking-data-body">
+                            <!-- Tracking records will be loaded here -->
+                        </tbody>
+                    </table>
+                </div>
+                <!-- Pagination Controls for Materials Table -->
+                <div style="display: flex; justify-content: center; align-items: center; gap: 20px; margin-top: 20px; padding: 20px;">
+                    <button onclick="previousPageTrackingTable()" style="padding: 10px 20px; background: linear-gradient(135deg, #0a9b03 0%, #15c524 100%); color: white; border: 2px solid #0a9b03; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s;">
+                        <i class="fa-solid fa-chevron-left" style="margin-right: 8px;"></i>Previous
+                    </button>
+                    <span id="trackingPageInfo" style="color: #15c524; font-weight: 600; font-size: 14px; min-width: 100px; text-align: center;">Page 1 of 1</span>
+                    <button onclick="nextPageTrackingTable()" style="padding: 10px 20px; background: linear-gradient(135deg, #0a9b03 0%, #15c524 100%); color: white; border: 2px solid #0a9b03; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s;">
+                        Next<i class="fa-solid fa-chevron-right" style="margin-left: 8px;"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Page -->
+        <div id="settingsPage" class="page-section" style="display: none;">
+            <section class="inventory">
+                <h2 style="margin-bottom: 30px;">Settings</h2>
+                
+                <!-- Settings Tabs -->
+                <div style="display:flex;gap:30px;margin-bottom:30px;border-bottom:2px solid rgba(10,155,3,0.2);padding-bottom:0;">
+                    <button id="accountManagementTab" class="settings-tab" onclick="switchSettingsTab('account')" style="padding:15px 0;background:none;border:none;color:#0a9b03;font-weight:600;font-size:14px;cursor:pointer;border-bottom:3px solid #0a9b03;transition:all 0.3s;margin-bottom:-2px;">
+                        <i class="fa-solid fa-lock" style="margin-right:8px;"></i>Account Management
+                    </button>
+                    <button id="activityLogTab" class="settings-tab" onclick="switchSettingsTab('activityLog')" style="padding:15px 0;background:none;border:none;color:#a0a0a0;font-weight:600;font-size:14px;cursor:pointer;border-bottom:3px solid transparent;transition:all 0.3s;margin-bottom:-2px;">
+                        <i class="fa-solid fa-clock" style="margin-right:8px;"></i>Activity Log
+                    </button>
+                </div>
+
+                <!-- Account Management Tab Content -->
+                <div id="accountManagementTabContent" class="tab-content" style="display:block;">
+                    <div style="max-width:600px;background:linear-gradient(135deg,rgba(26,58,82,0.6) 0%,rgba(11,37,64,0.6) 100%);padding:30px;border-radius:10px;border:1px solid rgba(10,155,3,0.2);">
+                        <h3 style="color:#15c524;margin-bottom:25px;font-size:18px;">Change Password</h3>
+                        
+                        <form id="changePasswordForm" onsubmit="saveNewPassword(event)" style="display:flex;flex-direction:column;gap:20px;">
+                            <div style="display:flex;flex-direction:column;gap:8px;">
+                                <label style="color:#0a9b03;font-weight:600;font-size:13px;">Current Password *</label>
+                                <input type="password" id="currentPassword" placeholder="Enter your current password" required style="width:100%;padding:12px;background:rgba(255,255,255,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:6px;color:#e0e0e0;font-family:inherit;box-sizing:border-box;">
+                            </div>
+
+                            <div style="display:flex;flex-direction:column;gap:8px;">
+                                <label style="color:#0a9b03;font-weight:600;font-size:13px;">New Password *</label>
+                            <input type="password" id="newPassword" placeholder="Enter your new password" required style="width:100%;padding:12px;background:rgba(255,255,255,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:6px;color:#e0e0e0;font-family:inherit;box-sizing:border-box;">
+                            <small style="color:#a0a0a0;font-size:12px;margin-top:4px;">Password must be at least 6 characters</small>
+                        </div>
+
+                        <div style="display:flex;flex-direction:column;gap:8px;">
+                            <label style="color:#0a9b03;font-weight:600;font-size:13px;">Confirm New Password *</label>
+                            <input type="password" id="confirmPassword" placeholder="Confirm your new password" required style="width:100%;padding:12px;background:rgba(255,255,255,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:6px;color:#e0e0e0;font-family:inherit;box-sizing:border-box;">
+                        </div>
+
+                        <div id="passwordError" style="margin:0;padding:12px;border-radius:6px;display:none;font-size:13px;"></div>
+
+                        <div style="display:flex;gap:10px;margin-top:20px;">
+                            <button type="submit" id="changePasswordBtn" style="flex:1;padding:12px;background:linear-gradient(135deg,#0a9b03 0%,#15c524 100%);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;">Change Password</button>
+                            <button type="button" onclick="resetPasswordForm()" style="flex:1;padding:12px;background:rgba(160,160,160,0.2);color:#a0a0a0;border:1px solid rgba(160,160,160,0.4);border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;">Cancel</button>
+                        </div>
+                    </form>
+
+                    <div style="margin-top:30px;padding:15px;background:rgba(10,155,3,0.1);border-radius:6px;border-left:4px solid #0a9b03;">
+                        <p style="margin:0;color:#a0a0a0;font-size:13px;"><strong>📋 Password Tips:</strong></p>
+                        <ul style="margin:8px 0 0 0;color:#a0a0a0;font-size:13px;padding-left:20px;">
+                            <li>Use a mix of uppercase and lowercase letters</li>
+                            <li>Include numbers and special characters</li>
+                            <li>Make it at least 8 characters long</li>
+                        </ul>
+                    </div>
+                    </div>
+                </div>
+
+                <!-- Activity Log Tab Content -->
+                <div id="activityLogTabContent" class="tab-content" style="display:none;">
+                    <div style="background:linear-gradient(135deg,rgba(26,58,82,0.6) 0%,rgba(11,37,64,0.6) 100%);padding:20px;border-radius:10px;border:1px solid rgba(10,155,3,0.2);">
+                        <!-- Search and Filter Container -->
+                        <div class="activity-logs-control-container" style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center;">
+                            <!-- Search Section -->
+                            <input 
+                                type="text" 
+                                id="activitySearchInput" 
+                                class="search-input" 
+                                placeholder="Search activity..." 
+                                onkeyup="searchActivityLogs()"
+                                style="flex:1;min-width:200px;padding:10px 14px;background:rgba(255,255,255,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:6px;color:#e0e0e0;"
+                            >
+                            
+                            <!-- Filter Dropdowns -->
+                            <select id="activityTypeFilterSelect" class="filter-dropdown" onchange="filterActivityLogsByType()" style="padding:10px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:6px;color:#e0e0e0;cursor:pointer;">
+                                <option value="">All Activities</option>
+                                <option value="MATERIAL">Material</option>
+                                <option value="PURCHASE_ORDER">Purchase Order</option>
+                                <option value="PAYMENT">Payment</option>
+                                <option value="PROJECT">Project</option>
+                            </select>
+
+                            <select id="activityMonthFilterSelect" class="filter-dropdown" onchange="filterActivityLogsByMonth()" style="padding:10px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:6px;color:#e0e0e0;cursor:pointer;">
+                                <option value="">All Months</option>
+                                <option value="1">January</option>
+                                <option value="2">February</option>
+                                <option value="3">March</option>
+                                <option value="4">April</option>
+                                <option value="5">May</option>
+                                <option value="6">June</option>
+                                <option value="7">July</option>
+                                <option value="8">August</option>
+                                <option value="9">September</option>
+                                <option value="10">October</option>
+                                <option value="11">November</option>
+                                <option value="12">December</option>
+                            </select>
+
+                            <select id="activityYearFilterSelect" class="filter-dropdown" onchange="filterActivityLogsByYear()" style="padding:10px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:6px;color:#e0e0e0;cursor:pointer;">
+                                <option value="">All Years</option>
+                                <option value="2030">2030</option>
+                                <option value="2029">2029</option>
+                                <option value="2028">2028</option>
+                                <option value="2027">2027</option>
+                                <option value="2026">2026</option>
+                                <option value="2025">2025</option>
+                            </select>
+
+                            <button id="clearActivityLogsBtn" class="clear-logs-btn" onclick="clearAllActivityLogs()" style="padding:10px 16px;background:rgba(255,107,107,0.2);color:#ff6b6b;border:1px solid rgba(255,107,107,0.4);border-radius:6px;cursor:pointer;font-weight:600;display:flex;align-items:center;gap:8px;">
+                                <i class="fa-solid fa-trash"></i> Clear Logs
+                            </button>
+                        </div>
+
+                        <div class="table-wrapper" style="overflow-x:auto;">
+                            <table class="data-table" style="width:100%;border-collapse:collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="padding:10px 12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,0.3);background:rgba(10,155,3,0.1);">TIME</th>
+                                        <th style="padding:10px 12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,0.3);background:rgba(10,155,3,0.1);">USER</th>
+                                        <th style="padding:10px 12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,0.3);background:rgba(10,155,3,0.1);">ACTIVITY TYPE</th>
+                                        <th style="padding:10px 12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,0.3);background:rgba(10,155,3,0.1);">ACTION</th>
+                                        <th style="padding:10px 12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,0.3);background:rgba(10,155,3,0.1);">DETAILS</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="activityLogsTableBody">
+                                    <!-- Activity logs will be loaded here -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Pagination -->
+                        <div class="pagination-container" style="margin-top: 20px; display: flex; justify-content: center; align-items: center; gap: 16px;">
+                            <button id="prevActivityPageBtn" class="pagination-btn" onclick="prevActivityLogsPage()" disabled style="padding: 10px 16px; background: rgba(10, 155, 3, 0.1); color: #0a9b03; border: 1px solid #0a9b03; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;">
+                                <i class="fa-solid fa-chevron-left"></i> Previous
+                            </button>
+                            <span id="activityPageIndicator" class="page-indicator" style="color: #a0a0a0; font-weight: 600; min-width: 100px; text-align: center; font-size: 13px;">Page 1</span>
+                            <button id="nextActivityPageBtn" class="pagination-btn" onclick="nextActivityLogsPage()" disabled style="padding: 10px 16px; background: rgba(10, 155, 3, 0.1); color: #0a9b03; border: 1px solid #0a9b03; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;">
+                                Next <i class="fa-solid fa-chevron-right"></i>
+                            </button>
+                        </div>
+                                    <th style="padding: 10px 12px; text-align: left; color: #0a9b03; font-weight: 600; border-bottom: 2px solid rgba(10,155,3,0.3);">Project ID</th>
+                                    <th style="padding: 10px 12px; text-align: left; color: #0a9b03; font-weight: 600; border-bottom: 2px solid rgba(10,155,3,0.3);">Client</th>
+                                    <th style="padding: 10px 12px; text-align: left; color: #0a9b03; font-weight: 600; border-bottom: 2px solid rgba(10,155,3,0.3);">Project Name</th>
+                                    <th style="padding: 10px 12px; text-align: left; color: #0a9b03; font-weight: 600; border-bottom: 2px solid rgba(10,155,3,0.3);">Location</th>
+                                    <th style="padding: 10px 12px; text-align: left; color: #0a9b03; font-weight: 600; border-bottom: 2px solid rgba(10,155,3,0.3);">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="projectsModalTableBody">
+                                <!-- Projects will be loaded here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Clear Activity Logs Confirmation Modal -->
+        <div id="clearActivityLogsConfirmModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px);">
+            <div class="modal-content" style="max-width: 400px; top: 50%; left: 50%; transform: translate(-50%, -50%); position: fixed;">
+                <span class="modal-close" onclick="closeClearActivityLogsConfirmModal()">&times;</span>
+                <h2 class="modal-title" style="color: #ff6b6b; margin-bottom: 16px;">
+                    <i class="fa-solid fa-exclamation-triangle" style="margin-right: 8px;"></i>Clear All Activity Logs
+                </h2>
+                <p style="color: #a0a0a0; margin-bottom: 20px; line-height: 1.6;">
+                    Are you sure you want to delete all activity logs? This action cannot be undone and will permanently remove all records from the database.
+                </p>
+                <div class="form-actions" style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button type="button" class="btn-cancel" onclick="closeClearActivityLogsConfirmModal()" style="padding: 10px 20px;">Cancel</button>
+                    <button type="button" class="btn-save" onclick="confirmClearAllActivityLogs()" style="padding: 10px 20px; background: rgba(255, 107, 107, 0.2); color: #ff6b6b; border: 1px solid rgba(255, 107, 107, 0.4); cursor: pointer;">
+                        <i class="fa-solid fa-trash" style="margin-right: 6px;"></i>Delete All Logs
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Change Delivery Status Modal -->
+        <div id="changeDeliveryStatusModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px);">
+            <div class="modal-content" style="max-width: 500px; top: 50%; left: 50%; transform: translate(-50%, -50%); position: fixed;">
+                <span class="modal-close" onclick="closeChangeDeliveryStatusModal()">&times;</span>
+                <h2 class="modal-title" style="margin-bottom: 20px;">
+                    <i class="fa-solid fa-truck" style="margin-right: 8px; color: #0a9b03;"></i>Change Delivery Status
+                </h2>
+                <p style="color: #a0a0a0; margin-bottom: 20px;">Select the new delivery status:</p>
+                <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px;">
+                    <button type="button" class="delivery-status-option" onclick="selectDeliveryStatus(0)" style="padding: 14px 16px; background: rgba(255, 23, 68, 0.15); color: #ff1744; border: 2px solid rgba(255, 23, 68, 0.3); border-radius: 6px; cursor: pointer; font-weight: 600; text-align: left; transition: all 0.2s ease; font-size: 15px;">
+                        <i class="fa-solid fa-circle" style="margin-right: 10px;"></i>1. PENDING
+                    </button>
+                    <button type="button" class="delivery-status-option" onclick="selectDeliveryStatus(1)" style="padding: 14px 16px; background: rgba(255, 165, 0, 0.15); color: #ffa500; border: 2px solid rgba(255, 165, 0, 0.3); border-radius: 6px; cursor: pointer; font-weight: 600; text-align: left; transition: all 0.2s ease; font-size: 15px;">
+                        <i class="fa-solid fa-circle-half-stroke" style="margin-right: 10px;"></i>2. PARTIALLY RECEIVED
+                    </button>
+                    <button type="button" class="delivery-status-option" onclick="selectDeliveryStatus(2)" style="padding: 14px 16px; background: rgba(10, 155, 3, 0.15); color: #0a9b03; border: 2px solid rgba(10, 155, 3, 0.3); border-radius: 6px; cursor: pointer; font-weight: 600; text-align: left; transition: all 0.2s ease; font-size: 15px;">
+                        <i class="fa-solid fa-circle-check" style="margin-right: 10px;"></i>3. FULLY RECEIVED
+                    </button>
+                </div>
+                <div class="form-actions" style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button type="button" class="btn-cancel" onclick="closeChangeDeliveryStatusModal()" style="padding: 10px 20px;">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Change Payment Status Modal -->
+        <div id="changePaymentStatusModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px);">
+            <div class="modal-content" style="max-width: 500px; top: 50%; left: 50%; transform: translate(-50%, -50%); position: fixed;">
+                <span class="modal-close" onclick="closeChangePaymentStatusModal()">&times;</span>
+                <h2 class="modal-title" style="margin-bottom: 20px;">
+                    <i class="fa-solid fa-credit-card" style="margin-right: 8px; color: #0a9b03;"></i>Change Payment Status
+                </h2>
+                <p style="color: #a0a0a0; margin-bottom: 20px;">Select the new payment status:</p>
+                <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px;">
+                    <button type="button" class="payment-status-option" onclick="selectPaymentStatus(0)" style="padding: 14px 16px; background: rgba(255, 23, 68, 0.15); color: #ff1744; border: 2px solid rgba(255, 23, 68, 0.3); border-radius: 6px; cursor: pointer; font-weight: 600; text-align: left; transition: all 0.2s ease; font-size: 15px;">
+                        <i class="fa-solid fa-circle" style="margin-right: 10px;"></i>1. UNPAID
+                    </button>
+                    <button type="button" class="payment-status-option" onclick="selectPaymentStatus(1)" style="padding: 14px 16px; background: rgba(255, 165, 0, 0.15); color: #ffa500; border: 2px solid rgba(255, 165, 0, 0.3); border-radius: 6px; cursor: pointer; font-weight: 600; text-align: left; transition: all 0.2s ease; font-size: 15px;">
+                        <i class="fa-solid fa-circle-half-stroke" style="margin-right: 10px;"></i>2. PARTIALLY PAID
+                    </button>
+                    <button type="button" class="payment-status-option" onclick="selectPaymentStatus(2)" style="padding: 14px 16px; background: rgba(10, 155, 3, 0.15); color: #0a9b03; border: 2px solid rgba(10, 155, 3, 0.3); border-radius: 6px; cursor: pointer; font-weight: 600; text-align: left; transition: all 0.2s ease; font-size: 15px;">
+                        <i class="fa-solid fa-circle-check" style="margin-right: 10px;"></i>3. FULLY PAID
+                    </button>
+                </div>
+                <div class="form-actions" style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button type="button" class="btn-cancel" onclick="closeChangePaymentStatusModal()" style="padding: 10px 20px;">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="addTrackingModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px);">
+            <div class="modal-content">
+                <span class="modal-close" onclick="closeAddTrackingModal()">&times;</span>
+                <h2 class="modal-title">Add New Tracking Record</h2>
+                <form id="addTrackingForm" onsubmit="saveTrackingRecord(event)">
+                    <div class="form-group">
+                        <label for="addItem">Item:</label>
+                        <input type="text" id="addItem" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addMonth">Month:</label>
+                        <input type="month" id="addMonth" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addClient">Client:</label>
+                        <input type="text" id="addClient" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addProjectName">Project Name:</label>
+                        <input type="text" id="addProjectName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addTrade">Trade:</label>
+                        <input type="text" id="addTrade" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addMR">MR #:</label>
+                        <input type="text" id="addMR" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addMRDate">MR Date:</label>
+                        <input type="date" id="addMRDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addPODate">P.O Date:</label>
+                        <input type="date" id="addPODate" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addPONo">P.O No.:</label>
+                        <input type="text" id="addPONo" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addVendors">Vendors:</label>
+                        <input type="text" id="addVendors" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addPOAmount">P.O Amount:</label>
+                        <input type="number" id="addPOAmount" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="addPaidAmount">Paid Amount:</label>
+                        <input type="number" id="addPaidAmount" step="0.01" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn-save">Add Tracking</button>
+                        <button type="button" class="btn-cancel" onclick="closeAddTrackingModal()">Cancel</button>
+                    </div>
+                </form>
+        </div>
+    </div>
+
+        <!-- Edit Tracking Modal -->
+        <div id="editTrackingModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px);">
+            <div class="modal-content">
+                <span class="modal-close" onclick="closeEditTrackingModal()">&times;</span>
+                <h2 class="modal-title">Edit Tracking Record</h2>
+                <form id="editTrackingForm" onsubmit="saveTrackingEdit(event)">
+                <div class="form-group">
+                    <label for="editItem">Item:</label>
+                    <input type="text" id="editItem" required>
+                </div>
+                <div class="form-group">
+                    <label for="editMonth">Month:</label>
+                    <input type="month" id="editMonth" required>
+                </div>
+                <div class="form-group">
+                    <label for="editClient">Client:</label>
+                    <input type="text" id="editClient" required>
+                </div>
+                <div class="form-group">
+                    <label for="editProjectName">Project Name:</label>
+                    <input type="text" id="editProjectName" required>
+                </div>
+                <div class="form-group">
+                    <label for="editTrade">Trade:</label>
+                    <input type="text" id="editTrade" required>
+                </div>
+                <div class="form-group">
+                    <label for="editMR">MR #:</label>
+                    <input type="text" id="editMR" required>
+                </div>
+                <div class="form-group">
+                    <label for="editPONo">P.O No.:</label>
+                    <input type="text" id="editPONo" required>
+                </div>
+                <div class="form-group">
+                    <label for="editVendors">Vendors:</label>
+                    <input type="text" id="editVendors" required>
+                </div>
+                <div class="form-group">
+                    <label for="editPOAmount">P.O Amount:</label>
+                    <input type="number" id="editPOAmount" step="0.01" required disabled>
+                </div>
+                <div class="form-group">
+                    <label for="editPaidAmount">Paid Amount:</label>
+                    <input type="number" id="editPaidAmount" step="0.01" required onchange="updateStatusOnAmountChange()">
+                </div>
+                <div class="form-group">
+                    <label for="editPaymentDate">Payment Date:</label>
+                    <input type="date" id="editPaymentDate">
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn-save">Save Changes</button>
+                    <button type="button" class="btn-cancel" onclick="closeEditTrackingModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+        <!-- Add Project Modal -->
+        <div id="addProjectModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px);">
+            <div class="modal-content">
+                <span class="modal-close" onclick="closeAddProjectModal()">&times;</span>
+                <h2 class="modal-title">+ Add Project</h2>
+                <form id="addProjectForm" onsubmit="saveProjectRecord(event)">
+                <div class="form-group">
+                    <label for="addProjectID">Project ID:</label>
+                    <input type="text" id="addProjectID" required>
+                </div>
+                <div class="form-group">
+                    <label for="addProjectClient">Client:</label>
+                    <input type="text" id="addProjectClient" required>
+                </div>
+                <div class="form-group">
+                    <label for="addProjectProjectName">Project Name:</label>
+                    <input type="text" id="addProjectProjectName" required>
+                </div>
+                <div class="form-group">
+                    <label for="addProjectLocation">Location:</label>
+                    <input type="text" id="addProjectLocation" required>
+                </div>
+                <div class="form-group">
+                    <label for="addProjectTrade">Trade:</label>
+                    <input type="text" id="addProjectTrade" required>
+                </div>
+                <div class="form-group">
+                    <label for="addProjectBudget">Project Budget:</label>
+                    <input type="number" id="addProjectBudget" step="0.01" required>
+                </div>
+                <div class="form-group">
+                    <label for="addProjectStatus">Status:</label>
+                    <select id="addProjectStatus" required>
+                        <option value="On-going">On-going</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Hold">Hold</option>
+                        <option value="Cancelled">Cancelled</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn-save">Add Project</button>
+                    <button type="button" class="btn-cancel" onclick="closeAddProjectModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+        <!-- Add Item Modal -->
+        <div id="addItemModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px);">
+            <div class="modal-content">
+                <span class="modal-close" onclick="closeAddItemModal()">&times;</span>
+                <h2 class="modal-title">+ Add Item to Project</h2>
+                <div style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.3);border-radius:6px;padding:12px;margin-bottom:15px;font-size:12px;color:#d0d0d0;">
+                    <span style="color:#0a9b03;font-weight:600;">💡 Auto-Populated from PO:</span> MR #, MR Date, P.O. Date, Parts Description, Quantity, Vendor
+                    <br/><span style="color:#ff9800;font-weight:600;">⚠️ Manual Entry Required:</span> Month, Unit Price, Delivery Date, Received Qty, Paid Amount, Payment Terms
+                </div>
+                <form id="addItemForm" onsubmit="saveItemRecord(event)">
+                <div class="form-group">
+                    <label for="addItemNumber">Item:</label>
+                    <input type="text" id="addItemNumber" required>
+                </div>
+                <div class="form-group">
+                    <label for="addItemDescription">Month: <span style="color:#ff9800;font-weight:600;">*</span></label>
+                    <select id="addItemDescription" required>
+                        <option value="">-- Select Month --</option>
+                        <option value="01">January</option>
+                        <option value="02">February</option>
+                        <option value="03">March</option>
+                        <option value="04">April</option>
+                        <option value="05">May</option>
+                        <option value="06">June</option>
+                        <option value="07">July</option>
+                        <option value="08">August</option>
+                        <option value="09">September</option>
+                        <option value="10">October</option>
+                        <option value="11">November</option>
+                        <option value="12">December</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="addItemMR">MR #: <span style="color:#0a9b03;font-weight:600;">Auto</span></label>
+                    <input type="text" id="addItemMR">
+                </div>
+                <div class="form-group">
+                    <label for="addItemMRDate">MR Date: <span style="color:#0a9b03;font-weight:600;">Auto</span></label>
+                    <input type="date" id="addItemMRDate">
+                </div>
+                <div class="form-group">
+                    <label for="addItemSpecification">Parts Description: <span style="color:#0a9b03;font-weight:600;">Auto</span></label>
+                    <input type="text" id="addItemSpecification">
+                </div>
+                <div class="form-group">
+                    <label for="addItemPONumber">P.O No.: <span style="color:#ff6b6b;font-weight:600;">*Required</span></label>
+                    <input type="text" id="addItemPONumber" required placeholder="Enter PO # to fetch details">
+                </div>
+                <div class="form-group">
+                    <label for="addItemQuantity">Quantity: <span style="color:#0a9b03;font-weight:600;">Auto</span></label>
+                    <input type="number" id="addItemQuantity" step="0.01" required onchange="calculateItemTotal()">
+                </div>
+                <div class="form-group">
+                    <label for="addItemUnitPrice">Unit Price: <span style="color:#ff9800;font-weight:600;">*Required</span></label>
+                    <input type="number" id="addItemUnitPrice" step="0.01" required onchange="calculateItemTotal(); calculateItemPaidAmount()">
+                </div>
+                <div class="form-group">
+                    <label for="addItemTotalAmount">Total Amount:</label>
+                    <input type="number" id="addItemTotalAmount" step="0.01" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="addItemPODate">P.O. Date: <span style="color:#0a9b03;font-weight:600;">Auto</span></label>
+                    <input type="date" id="addItemPODate" required>
+                </div>
+                <div class="form-group">
+                    <label for="addItemDeliveryDate">Delivery Date: <span style="color:#ff9800;font-weight:600;">*Required</span></label>
+                    <input type="date" id="addItemDeliveryDate">
+                </div>
+                <div class="form-group">
+                    <label for="addReceivedItemQty">Received Qty: <span style="color:#ff9800;font-weight:600;">*Required</span></label>
+                    <input type="number" id="addReceivedItemQty" step="0.01" required onchange="calculatePOBalanceQtyItem(); calculateItemPaidAmount()">
+                </div>
+                <div class="form-group">
+                    <label for="addPOBalanceQtyItem">P.O Balance Qty:</label>
+                    <input type="number" id="addPOBalanceQtyItem" step="0.01" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="addItemPaidAmount">Paid Amount: <span style="color:#ff9800;font-weight:600;">*Required</span></label>
+                    <input type="number" id="addItemPaidAmount" step="0.01" required onchange="calculateItemRemainingPayable()">
+                </div>
+                <div class="form-group">
+                    <label for="addItemRemainingPayable">Remaining Payable:</label>
+                    <input type="number" id="addItemRemainingPayable" step="0.01" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="addItemVendor">Vendor/Suppliers: <span style="color:#0a9b03;font-weight:600;">Auto</span></label>
+                    <input type="text" id="addItemVendor">
+                </div>
+                <div class="form-group">
+                    <label for="addItemPaymentTerms">Payment Terms: <span style="color:#ff9800;font-weight:600;">*Required</span></label>
+                    <select id="addItemPaymentTerms">
+                        <option value="">-- Select Terms --</option>
+                        <option value="COD">COD (Cash on Delivery)</option>
+                        <option value="Net 15">Net 15</option>
+                        <option value="Net 30">Net 30</option>
+                        <option value="Net 60">Net 60</option>
+                        <option value="Net 90">Net 90</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="addItemStatus">Status:</label>
+                    <select id="addItemStatus" required>
+                        <option value="On-going">On-going</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Hold">Hold</option>
+                        <option value="Cancelled">Cancelled</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn-save">Add Item</button>
+                    <button type="button" class="btn-cancel" onclick="closeAddItemModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Project Details Page -->
+    <div class="page-content" id="project-details-page" style="display: none;">
+        <div class="page-header">
+            <button class="btn-actions" onclick="showProjectsPage()" style="background-color: #666; margin-right: auto;">← Back to Projects</button>
+            <h1 class="page-title">Project Details</h1>
+        </div>
+
+        <div class="content-section">
+            <!-- First Container: Project Information -->
+            <div class="project-details-container-1">
+                <div class="project-info-grid">
+                    <div class="info-column">
+                        <div class="info-item">
+                            <span class="info-label">Client</span>
+                            <span class="info-value" id="detailClient">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Project Name</span>
+                            <span class="info-value" id="detailProjectProjectName">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Project Budget</span>
+                            <span class="info-value" id="detailProjectBudget">-</span>
+                        </div>
+                    </div>
+                    <div class="info-column">
+                        <div class="info-item">
+                            <span class="info-label">Project ID</span>
+                            <span class="info-value" id="detailProjectID">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Location</span>
+                            <span class="info-value" id="detailLocation">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Trade</span>
+                            <span class="info-value" id="detailTrade">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Linked Purchase Orders Section -->
+            <div class="project-details-container-1" style="margin-top:20px;border:1px solid rgba(10,155,3,0.2);border-radius:8px;padding:20px;background:rgba(10,155,3,0.05);">
+                <h2 style="color:#0a9b03;margin:0 0 15px 0;font-size:16px;display:flex;align-items:center;gap:8px;">
+                    <i class="fa-solid fa-file-invoice" style="color:#0a9b03;"></i>Linked Purchase Orders
+                </h2>
+                <div id="projectLinkedPOsContainer" style="display:grid;gap:10px;">
+                    <div style="color:#a0a0a0;font-size:13px;padding:15px;background:rgba(0,0,0,0.2);border-radius:6px;text-align:center;">Loading linked POs...</div>
+                </div>
+            </div>
+
+            <!-- Second Container: Project Details Data (Rebuild) -->
+            <div class="project-details-container-2">
+                <div class="container-header">
+                    <h2 class="container-title">Project Details Data</h2>
+                    <div class="project-details-controls">
+                        <!-- Dropdown Menu with 3 Dots -->
+                        <div class="dropdown-menu" style="position: relative;">
+                            <button class="dropdown-toggle" onclick="toggleProjectDataDropdown()" style="background:linear-gradient(135deg, #0a9b03 0%, #15c524 100%);color:white;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;width:40px;height:40px;transition:all 0.3s;">⋮</button>
+                            <div class="dropdown-content" id="projectDataDropdown" style="position:absolute;top:100%;right:0;background:rgba(15,30,53,0.95);border:1px solid rgba(10,155,3,.3);border-radius:6px;min-width:200px;margin-top:8px;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:100;display:none;overflow:hidden;">
+                                <a href="#" onclick="openConfigureProjectDataColumnsModal(); return false;" style="display:flex;align-items:center;gap:10px;padding:12px 16px;color:#e0e0e0;text-decoration:none;font-size:14px;transition:all 0.2s;border-bottom:1px solid rgba(10,155,3,.2);" onmouseover="this.style.background='rgba(10,155,3,.2)'" onmouseout="this.style.background='none'"><i class="fa-solid fa-sliders" style="color:#0a9b03;"></i> Configure Columns</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="container-content">
+                    <div class="table-wrapper">
+                        <table class="project-data-table">
+                            <thead>
+                                <tr id="projectDataTableHead">
+                                    <!-- Columns will be dynamically generated here -->
+                                </tr>
+                            </thead>
+                            <tbody id="projectDataTableBody">
+                                <!-- Data will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Configure Columns Modal for Projects Table -->
+    <div id="configureProjectsTableColumnsModal" class="modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.2);backdrop-filter:blur(3px);z-index:2000;overflow-y:auto;padding:40px 20px;">
+        <div style="max-width:1000px;margin:0 auto;">
+            <div style="background:linear-gradient(135deg,rgba(26,58,82,0.95) 0%,rgba(11,37,64,0.95) 100%);border:1px solid rgba(10,155,3,0.3);border-radius:12px;padding:30px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:25px;">
+                    <h2 style="margin:0;color:#15c524;font-size:24px;"><i class="fa-solid fa-sliders" style="margin-right:10px;"></i>Configure Projects Table Columns</h2>
+                    <button onclick="closeConfigureProjectsTableColumnsModal()" style="background:none;border:none;color:#a0a0a0;font-size:28px;cursor:pointer;padding:0;width:30px;height:30px;">×</button>
+                </div>
+
+                <div style="background:rgba(10,155,3,0.15);border:1px solid rgba(10,155,3,0.3);border-radius:8px;padding:15px;margin-bottom:20px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <p style="color:#15c524;margin:0;font-size:13px;font-weight:600;"><i class="fa-solid fa-info-circle" style="margin-right:8px;"></i>Configure Table Display:</p>
+                        <button onclick="toggleConfigureDetailsProjects()" style="background:none;border:none;color:#0a9b03;cursor:pointer;font-size:12px;font-weight:600;padding:4px 8px;transition:all 0.2s;" id="toggleDetailsBtn">Hide Details</button>
+                    </div>
+                    <div id="configureDetailsContent" style="display:block;transition:all 0.3s;">
+                        <ul style="margin:0;padding-left:20px;color:#a0a0a0;font-size:13px;line-height:1.8;">
+                            <li><span style="color:#0a9b03;font-weight:600;">📋 Drag to reorder</span> - Reorganize column positions</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">☑️ Check to show</span> - Display selected columns</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">☐ Uncheck to hide</span> - Hide unwanted columns</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">➕ Add new columns</span> - Use input below to add custom columns</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">🗑️ Delete columns</span> - Click delete icon on column items</li>
+                        </ul>
+                        <p style="color:#a0a0a0;margin:10px 0 0 0;font-size:12px;font-style:italic;">💾 Changes auto-save!</p>
+                    </div>
+                </div>
+
+                <div id="projectsTableColumnsCheckboxList" style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.2);border-radius:8px;padding:15px;margin-bottom:25px;max-height:450px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;" ondragover="event.preventDefault();event.dataTransfer.dropEffect='move';" ondrop="handleProjectsTableContainerDrop(event)">
+                    <!-- Column items will be generated here -->
+                </div>
+
+                <div style="display:flex;gap:10px;margin-bottom:25px;">
+                    <button type="button" onclick="triggerProjectColumnsMigration()" style="padding:8px 12px;background:#ff9800;color:#111;border:none;border-radius:6px;cursor:pointer;font-weight:700;">Run Migration (TEST)</button>
+                    <input type="text" id="newProjectsTableColumnNameInput" placeholder="Enter column name" style="flex:1;padding:12px;background:rgba(255,255,255,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:6px;color:#e0e0e0;font-size:14px;transition:all 0.3s;" onfocus="this.style.background='rgba(10,155,3,0.1)';this.style.borderColor='rgba(10,155,3,0.6)'" onblur="this.style.background='rgba(255,255,255,0.08)';this.style.borderColor='rgba(10,155,3,0.3)'" onkeypress="if(event.key==='Enter') addNewProjectsTableColumn();">
+                    <button type="button" onclick="addNewProjectsTableColumn()" style="padding:12px 24px;background:linear-gradient(135deg,#0a9b03 0%,#15c524 100%);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;display:flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;">
+                        <i class="fa-solid fa-plus"></i> Add Column
+                    </button>
+                </div>
+
+                <div style="display:flex;gap:10px;">
+                    <button type="button" onclick="saveProjectsTableColumnSettings()" style="flex:1;padding:12px;background:linear-gradient(135deg,#0a9b03 0%,#15c524 100%);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;display:flex;align-items:center;justify-content:center;gap:8px;">
+                        <i class="fa-solid fa-check"></i> Save & Close
+                    </button>
+                    <button type="button" onclick="closeConfigureProjectsTableColumnsModal()" style="flex:1;padding:12px;background:rgba(160,160,160,0.2);color:#a0a0a0;border:1px solid rgba(160,160,160,0.4);border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;display:flex;align-items:center;justify-content:center;gap:8px;">
+                        <i class="fa-solid fa-times"></i> Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Configure Columns Modal for Project Details -->
+    <div id="configureProjectColumnsModal" class="modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.2);backdrop-filter:blur(3px);z-index:2000;overflow-y:auto;padding:40px 20px;">
+        <div style="max-width:1000px;margin:0 auto;">
+            <div style="background:linear-gradient(135deg,rgba(26,58,82,0.95) 0%,rgba(11,37,64,0.95) 100%);border:1px solid rgba(10,155,3,0.3);border-radius:12px;padding:30px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:25px;">
+                    <h2 style="margin:0;color:#15c524;font-size:24px;"><i class="fa-solid fa-sliders" style="margin-right:10px;"></i>Configure Table Columns</h2>
+                    <button onclick="closeConfigureColumnsModal()" style="background:none;border:none;color:#a0a0a0;font-size:28px;cursor:pointer;padding:0;width:30px;height:30px;">×</button>
+                </div>
+
+                <div style="background:rgba(10,155,3,0.15);border:1px solid rgba(10,155,3,0.3);border-radius:8px;padding:15px;margin-bottom:20px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <p style="color:#15c524;margin:0;font-size:13px;font-weight:600;"><i class="fa-solid fa-info-circle" style="margin-right:8px;"></i>Configure Table Display:</p>
+                        <button onclick="toggleConfigureDetailsProjectDetails()" style="background:none;border:none;color:#0a9b03;cursor:pointer;font-size:12px;font-weight:600;padding:4px 8px;transition:all 0.2s;" id="toggleDetailsBtnProjectDetails">Hide Details</button>
+                    </div>
+                    <div id="configureDetailsContentProjectDetails" style="display:block;transition:all 0.3s;">
+                        <ul style="margin:0;padding-left:20px;color:#a0a0a0;font-size:13px;line-height:1.8;">
+                            <li><span style="color:#0a9b03;font-weight:600;">📋 Drag to reorder</span> - Reorganize column positions</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">☑️ Check to show</span> - Display selected columns</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">☐ Uncheck to hide</span> - Hide unwanted columns</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">➕ Add new columns</span> - Use input below to add custom columns</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">🗑️ Delete columns</span> - Click delete icon on column items</li>
+                        </ul>
+                        <p style="color:#a0a0a0;margin:10px 0 0 0;font-size:12px;font-style:italic;">💾 Changes auto-save!</p>
+                    </div>
+                </div>
+
+                <div id="projectColumnsCheckboxList" style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.2);border-radius:8px;padding:15px;margin-bottom:25px;max-height:450px;overflow-y:auto;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+                    <!-- Column items will be generated here -->
+                </div>
+
+                <div style="display:flex;gap:10px;margin-bottom:25px;">
+                    <input type="text" id="newColumnNameInput" placeholder="Enter column name" style="flex:1;padding:12px;background:rgba(255,255,255,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:6px;color:#e0e0e0;font-size:14px;transition:all 0.3s;" onfocus="this.style.background='rgba(10,155,3,0.1)';this.style.borderColor='rgba(10,155,3,0.6)'" onblur="this.style.background='rgba(255,255,255,0.08)';this.style.borderColor='rgba(10,155,3,0.3)'" onkeypress="if(event.key==='Enter') addNewColumn();">
+                    <button type="button" onclick="addNewColumn()" style="padding:12px 24px;background:linear-gradient(135deg,#0a9b03 0%,#15c524 100%);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;display:flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;">
+                        <i class="fa-solid fa-plus"></i> Add Column
+                    </button>
+                </div>
+
+                <div style="display:flex;gap:10px;">
+                    <button type="button" onclick="saveProjectColumnSettings()" style="flex:1;padding:12px;background:linear-gradient(135deg,#0a9b03 0%,#15c524 100%);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;display:flex;align-items:center;justify-content:center;gap:8px;">
+                        <i class="fa-solid fa-check"></i> Save & Close
+                    </button>
+                    <button type="button" onclick="closeConfigureColumnsModal()" style="flex:1;padding:12px;background:rgba(160,160,160,0.2);color:#a0a0a0;border:1px solid rgba(160,160,160,0.4);border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;display:flex;align-items:center;justify-content:center;gap:8px;">
+                        <i class="fa-solid fa-times"></i> Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Projects Page -->
+    <div class="page-content" id="projects-page" style="display: none;">
+        <div class="page-header">
+            <button class="btn-actions" onclick="showDashboardPage()" style="background-color: #666; margin-right: auto;">← Go Back to Dashboard</button>
+            <div style="position: relative;">
+                <button class="btn-actions" onclick="toggleProjectActionsDropdown()" style="display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; background: linear-gradient(135deg, #0a9b03 0%, #15c524 100%); border: none; border-radius: 8px; cursor: pointer; font-size: 20px; color: white; transition: all 0.3s;">
+                    <i class="fa-solid fa-ellipsis-vertical"></i>
+                </button>
+                <div id="projectActionsDropdown" style="display: none; position: absolute; top: 100%; right: 0; background: #1a3a52; border: 1px solid rgba(10, 155, 3, 0.5); border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); z-index: 1000; min-width: 220px; margin-top: 8px; overflow: hidden;">
+                    <button onclick="openAddProjectModal()" style="width: 100%; padding: 14px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 14px; transition: background 0.2s; border-bottom: 1px solid rgba(10, 155, 3, 0.2); display: flex; align-items: center; gap: 10px;" onmouseover="this.style.background='rgba(10,155,3,0.1)'" onmouseout="this.style.background='none'">
+                        <i class="fa-solid fa-plus" style="width: 16px;"></i> Add Project
+                    </button>
+                    <button onclick="openConfigureProjectsTableColumnsModal()" style="width: 100%; padding: 14px 16px; background: none; border: none; color: #0a9b03; text-align: left; cursor: pointer; font-weight: 600; font-size: 14px; transition: background 0.2s; display: flex; align-items: center; gap: 10px;" onmouseover="this.style.background='rgba(10,155,3,0.1)'" onmouseout="this.style.background='none'">
+                        <i class="fa-solid fa-sliders" style="width: 16px;"></i> Configuration Columns
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-section">
+            <div class="section-header">
+                <h2 class="section-title">Company Projects & Funds</h2>
+                <!-- Search and Filter Container -->
+                <div class="projects-control-container">
+                    <!-- Search Section -->
+                    <div class="search-section">
+                        <input type="text" id="projectSearchInput" class="search-input" placeholder="Search project...">
+                        <button class="search-btn" onclick="searchProjects()">🔍 Search</button>
+                    </div>
+                </div>
+            </div>
+            <div class="table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Project ID</th>
+                            <th>Client</th>
+                            <th>Project Name</th>
+                            <th>Location</th>
+                            <th>Trade</th>
+                            <th>Project Budget</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="projectsTableBody">
+                        <!-- Projects will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+            <!-- Pagination Controls for Projects Table -->
+            <div style="display: flex; justify-content: center; align-items: center; gap: 20px; margin-top: 20px; padding: 20px;">
+                <button onclick="previousPageProjectsTable()" style="padding: 10px 20px; background: linear-gradient(135deg, #0a9b03 0%, #15c524 100%); color: white; border: 2px solid #0a9b03; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s;">
+                    <i class="fa-solid fa-chevron-left" style="margin-right: 8px;"></i>Previous
+                </button>
+                <span id="projectsPageInfo" style="color: #15c524; font-weight: 600; font-size: 14px; min-width: 100px; text-align: center;">Page 1 of 1</span>
+                <button onclick="nextPageProjectsTable()" style="padding: 10px 20px; background: linear-gradient(135deg, #0a9b03 0%, #15c524 100%); color: white; border: 2px solid #0a9b03; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s;">
+                    Next<i class="fa-solid fa-chevron-right" style="margin-left: 8px;"></i>
+                </button>
+            </div>
+    </div>
+
+    <!-- Purchase Tracking Page -->
+    </div>
+
+        <!-- Delete Confirmation Modal -->
+        <div id="deleteConfirmationModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 10000; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px);">
+            <div class="confirmation-modal-content">
+                <div style="font-size: 48px; margin-bottom: 20px;">⚠️</div>
+                <p id="confirmationMessage">Are you sure you want to delete?</p>
+                <p style="color: #ff4444; font-size: 14px; margin-bottom: 25px; font-weight: 600;">Note : This action cannot be undone</p>
+                <div class="confirmation-actions">
+                    <button class="btn-no" onclick="cancelDelete()">No</button>
+                    <button class="btn-yes" onclick="confirmDelete()">Yes</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Change Password Modal -->
+        <div id="changePasswordModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px);">
+            <div class="modal-content">
+                <span class="modal-close" onclick="closeChangePasswordModal()">&times;</span>
+                <h2 class="modal-title">Change Password</h2>
+                <form id="changePasswordModalForm" onsubmit="saveNewPassword(event)">
+                    <div class="form-group">
+                        <label for="modalCurrentPassword">Current Password:</label>
+                        <input type="password" id="modalCurrentPassword" required placeholder="Enter current password">
+                    </div>
+                    <div class="form-group">
+                        <label for="modalNewPassword">New Password:</label>
+                        <input type="password" id="modalNewPassword" required placeholder="Enter new password">
+                    </div>
+                    <div class="form-group">
+                        <label for="modalConfirmPassword">Confirm Password:</label>
+                        <input type="password" id="modalConfirmPassword" required placeholder="Confirm new password">
+                    </div>
+                    <div id="modalPasswordError" style="color: #ff6b6b; margin-top: 10px; font-size: 12px;"></div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn-primary">Change Password</button>
+                        <button type="button" class="btn-secondary" onclick="closeChangePasswordModal()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Overlay for Sidebar (Mobile) -->
+        <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+    </main>
+
+    <!-- Payment Details Modal -->
+    <div id="paymentDetailsModal" class="modal" style="display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 10000; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(3px); align-items: center; justify-content: center; visibility: hidden; opacity: 0; transition: opacity 0.3s, visibility 0.3s;" onmousedown="if(event.target === this) closePaymentDetailsModal();">
+        <div style="max-width: 550px; width: 90%; max-height: 90vh; overflow-y: auto;">
+            <div style="background: linear-gradient(135deg, rgba(15, 50, 80, 0.95) 0%, rgba(20, 60, 90, 0.95) 100%); border: 1px solid rgba(29, 209, 161, 0.3); border-radius: 12px; padding: 24px;">
+                <!-- Header with Close Button -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                    <h2 style="margin: 0; color: #1dd1a1; font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-credit-card" style="color: #1dd1a1;"></i>Payment Details
+                    </h2>
+                    <button onclick="closePaymentDetailsModal()" style="background: none; border: none; color: #a0a0a0; font-size: 28px; cursor: pointer; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">×</button>
+                </div>
+
+                <!-- Item Information Section -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px 16px; margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid rgba(29, 209, 161, 0.15);">
+                    <div>
+                        <p style="margin: 0; color: #a0a0a0; font-size: 11px; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Item</p>
+                        <p id="paymentDetailItem" style="margin: 0; color: #e0e0e0; font-size: 14px; font-weight: 600;">-</p>
+                    </div>
+                    <div>
+                        <p style="margin: 0; color: #a0a0a0; font-size: 11px; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">P.O. Number</p>
+                        <p id="paymentDetailPONumber" style="margin: 0; color: #e0e0e0; font-size: 14px; font-weight: 600;">-</p>
+                    </div>
+                    <div>
+                        <p style="margin: 0; color: #a0a0a0; font-size: 11px; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Vendor</p>
+                        <p id="paymentDetailVendor" style="margin: 0; color: #e0e0e0; font-size: 13px; font-weight: 500; line-height: 1.4;">-</p>
+                    </div>
+                    <div>
+                        <p style="margin: 0; color: #a0a0a0; font-size: 11px; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Delivery Date</p>
+                        <p id="paymentDetailDeliveryDate" style="margin: 0; color: #e0e0e0; font-size: 14px; font-weight: 600;">-</p>
+                    </div>
+                </div>
+
+                <!-- Update Paid Amount Section -->
+                <div style="margin-bottom: 24px; padding: 16px; background: rgba(29, 209, 161, 0.08); border: 1px solid rgba(29, 209, 161, 0.2); border-radius: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h3 style="margin: 0; color: #1dd1a1; font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+                            <i class="fa-solid fa-pencil" style="color: #1dd1a1; font-size: 12px;"></i>Update Paid Amount
+                        </h3>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr auto; gap: 10px;">
+                        <div>
+                            <input type="number" id="updatePaidAmountInput" placeholder="Enter paid amount..." step="0.01" min="0" style="width: 100%; padding: 10px 12px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(29, 209, 161, 0.2); border-radius: 6px; color: #e0e0e0; font-size: 13px;" />
+                        </div>
+                        <button onclick="addPaymentRecord()" style="padding: 10px 16px; background: linear-gradient(135deg, #1dd1a1 0%, #11998e 100%); color: #0f3250; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px; transition: all 0.3s; white-space: nowrap;">
+                            <i class="fa-solid fa-plus" style="margin-right: 4px;"></i>Update
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Payment History Section -->
+                <div style="margin-bottom: 24px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h3 style="margin: 0; color: #1dd1a1; font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+                            <i class="fa-solid fa-history" style="color: #1dd1a1; font-size: 14px;"></i>Payment History
+                        </h3>
+                        <button id="hidePaymentHistoryBtn" onclick="togglePaymentHistoryList()" style="background: none; border: none; color: #1dd1a1; cursor: pointer; font-weight: 600; font-size: 11px; padding: 0; transition: all 0.2s;" onmouseover="this.style.opacity='0.7'" onmouseout="this.style.opacity='1'">Hide Lists</button>
+                    </div>
+
+                    <!-- Payment History Table -->
+                    <div id="paymentHistoryTableContainer" style="background: rgba(29, 209, 161, 0.08); border: 1px solid rgba(29, 209, 161, 0.15); border-radius: 6px; overflow: hidden;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="background: rgba(29, 209, 161, 0.1); border-bottom: 1px solid rgba(29, 209, 161, 0.15);">
+                                    <th style="padding: 10px 12px; text-align: left; color: #1dd1a1; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Date of Payment</th>
+                                    <th style="padding: 10px 12px; text-align: right; color: #1dd1a1; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Paid Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody id="paymentHistoryTableBody">
+                                <tr style="border-bottom: 1px solid rgba(29, 209, 161, 0.1);">
+                                    <td colspan="2" style="padding: 12px; text-align: center; color: #a0a0a0; font-size: 12px;">One payment recorded</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Payment Summary Section -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div>
+                        <p style="margin: 0; color: #a0a0a0; font-size: 11px; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Total Amount</p>
+                        <p id="paymentDetailTotalAmount" style="margin: 0; color: #1dd1a1; font-size: 18px; font-weight: 700;">₱0.00</p>
+                    </div>
+                    <div>
+                        <p style="margin: 0; color: #a0a0a0; font-size: 11px; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Total Paid Amount</p>
+                        <p id="paymentDetailTotalPaidAmount" style="margin: 0; color: #e0e0e0; font-size: 18px; font-weight: 700;">₱0.00</p>
+                    </div>
+                </div>
+
+                <!-- Remaining Payable Section -->
+                <div style="margin-bottom: 20px;">
+                    <p style="margin: 0; color: #a0a0a0; font-size: 11px; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Remaining Payable</p>
+                    <p id="paymentDetailRemainingPayable" style="margin: 0; color: #ff6b6b; font-size: 22px; font-weight: 700;">₱0.00</p>
+                </div>
+
+                <!-- Close Button -->
+                <button onclick="closePaymentDetailsModal()" style="width: 100%; padding: 12px 20px; background: linear-gradient(135deg, #0a9b03 0%, #15c524 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 15px; transition: all 0.3s; box-shadow: 0 4px 12px rgba(10, 155, 3, 0.2);">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Payment Alerts Details Modal -->
+    <div id="paymentAlertsModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(3px); overflow-y: auto;">
+        <div style="max-width: 900px; margin: 40px auto; padding: 0 20px;">
+            <div style="background: linear-gradient(135deg, rgba(15, 50, 80, 0.98) 0%, rgba(20, 60, 90, 0.98) 100%); border: 1px solid rgba(29, 209, 161, 0.3); border-radius: 12px; padding: 30px;">
+                <!-- Header with Close Button -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+                    <h2 style="margin: 0; color: #1dd1a1; font-size: 24px; display: flex; align-items: center; gap: 10px;">
+                        <i class="fa-solid fa-exclamation-circle" style="color: #ff9800;"></i>PAYMENT ALERTS DETAILS
+                    </h2>
+                    <button onclick="closePaymentAlertsModal()" style="background: none; border: none; color: #a0a0a0; font-size: 32px; cursor: pointer; padding: 0;">×</button>
+                </div>
+
+                <!-- Filter Tabs -->
+                <div style="display: flex; gap: 20px; margin-bottom: 30px; border-bottom: 1px solid rgba(29, 209, 161, 0.15); padding-bottom: 16px;">
+                    <button onclick="filterPaymentAlerts('all')" class="alertFilterBtn" data-filter="all" style="background: none; border: none; color: #1dd1a1; cursor: pointer; font-weight: 600; font-size: 14px; padding: 8px 12px; border-bottom: 2px solid #1dd1a1;">
+                        <i class="fa-solid fa-list" style="margin-right: 6px;"></i>All Alerts <span id="allAlertsCount" style="background: #ff9800; color: white; border-radius: 50%; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; margin-left: 6px;">0</span>
+                    </button>
+                    <button onclick="filterPaymentAlerts('overdue')" class="alertFilterBtn" data-filter="overdue" style="background: none; border: none; color: #ff6b6b; cursor: pointer; font-weight: 600; font-size: 14px; padding: 8px 12px; transition: all 0.2s;">
+                        <i class="fa-solid fa-circle" style="margin-right: 6px; font-size: 10px;"></i>Overdue <span id="overdueAlertsCount" style="background: #ff6b6b; color: white; border-radius: 50%; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; margin-left: 6px;">0</span>
+                    </button>
+                    <button onclick="filterPaymentAlerts('due-soon')" class="alertFilterBtn" data-filter="due-soon" style="background: none; border: none; color: #ff9800; cursor: pointer; font-weight: 600; font-size: 14px; padding: 8px 12px; transition: all 0.2s;">
+                        <i class="fa-solid fa-hourglass-end" style="margin-right: 6px;"></i>Due Soon <span id="dueSoonAlertsCount" style="background: #ff9800; color: white; border-radius: 50%; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; margin-left: 6px;">0</span>
+                    </button>
+                </div>
+
+                <!-- Alerts List -->
+                <div id="paymentAlertsContainer" style="display: grid; gap: 16px;">
+                    <!-- Alert items will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- All JavaScript code has been moved to purchasing.js -->
+    <script>
+        // Basic functions needed before module loads
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            const hamburger = document.getElementById('hamburgerBtn');
+            const mainContent = document.querySelector('.main-content');
+            sidebar.classList.toggle('active');
+            overlay.classList.toggle('active');
+            hamburger.classList.toggle('active');
+            mainContent.classList.toggle('sidebar-open');
+        }
+
+        function closeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            const hamburger = document.getElementById('hamburgerBtn');
+            const mainContent = document.querySelector('.main-content');
+            sidebar.classList.remove('active');
+            overlay.classList.remove('active');
+            hamburger.classList.remove('active');
+            mainContent.classList.remove('sidebar-open');
+        }
+
+        function switchTab(index) {
+            const links = document.querySelectorAll('.menu-link');
+            links.forEach(link => link.classList.remove('active'));
+            links[index].classList.add('active');
+        }
+
+        function toggleSubmenu(button) {
+            const menuItem = button.parentElement;
+            const submenu = menuItem.querySelector('.submenu');
+            menuItem.classList.toggle('active');
+            if (submenu.style.maxHeight) {
+                submenu.style.maxHeight = null;
+            } else {
+                submenu.style.maxHeight = submenu.scrollHeight + 'px';
+            }
+        }
+    </script>
+
+</div><!-- End of appContent -->
+
+<!-- Check Firebase Auth State -->
+<script type="module">
+    import { auth } from "./firebase.js";
+    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+    // Check if user is authenticated with Firebase
+    onAuthStateChanged(auth, (user) => {
+        if (!user) {
+            // Not logged in - redirect to login
+            console.log("❌ User not authenticated, redirecting to login...");
+            window.location.href = "login.html";
+        } else {
+            // User is logged in - show content
+            console.log("✅ User authenticated:", user.email);
+            document.getElementById("appContent").style.display = "block";
+        }
+    });
+</script>
+
+</body>
+    <!-- Configure Columns Modal for Project Data Table -->
+    <div id="configureProjectDataColumnsModal" class="modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.2);backdrop-filter:blur(3px);z-index:2000;overflow-y:auto;padding:40px 20px;">
+        <div style="max-width:1000px;margin:0 auto;">
+            <div style="background:linear-gradient(135deg,rgba(26,58,82,0.95) 0%,rgba(11,37,64,0.95) 100%);border:1px solid rgba(10,155,3,0.3);border-radius:12px;padding:30px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:25px;">
+                    <h2 style="margin:0;color:#15c524;font-size:24px;"><i class="fa-solid fa-sliders" style="margin-right:10px;"></i>Configure Project Data Columns</h2>
+                    <button onclick="closeConfigureProjectDataColumnsModal()" style="background:none;border:none;color:#a0a0a0;font-size:28px;cursor:pointer;padding:0;width:30px;height:30px;">×</button>
+                </div>
+
+                <div style="background:rgba(10,155,3,0.15);border:1px solid rgba(10,155,3,0.3);border-radius:8px;padding:15px;margin-bottom:20px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <p style="color:#15c524;margin:0;font-size:13px;font-weight:600;"><i class="fa-solid fa-info-circle" style="margin-right:8px;"></i>Configure Table Display:</p>
+                        <button onclick="toggleConfigureDetailsProjectData()" style="background:none;border:none;color:#0a9b03;cursor:pointer;font-size:12px;font-weight:600;padding:4px 8px;transition:all 0.2s;" id="toggleDetailsBtnProjectData">Hide Details</button>
+                    </div>
+                    <div id="configureDetailsContentProjectData" style="display:block;transition:all 0.3s;">
+                        <ul style="margin:0;padding-left:20px;color:#a0a0a0;font-size:13px;line-height:1.8;">
+                            <li><span style="color:#0a9b03;font-weight:600;">📋 Drag to reorder</span> - Reorganize column positions</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">☑️ Check to show</span> - Display selected columns</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">☐ Uncheck to hide</span> - Hide unwanted columns</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">➕ Add new columns</span> - Use input below to add custom columns</li>
+                            <li><span style="color:#0a9b03;font-weight:600;">🗑️ Delete columns</span> - Click delete icon on column items</li>
+                        </ul>
+                        <p style="color:#a0a0a0;margin:10px 0 0 0;font-size:12px;font-style:italic;">💾 Changes auto-save!</p>
+                    </div>
+                </div>
+
+                <div id="projectDataColumnsCheckboxList" style="background:rgba(10,155,3,0.1);border:1px solid rgba(10,155,3,0.2);border-radius:8px;padding:15px;margin-bottom:25px;max-height:450px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;" ondragover="event.preventDefault();event.dataTransfer.dropEffect='move';" ondrop="handleProjectDataColumnContainerDrop(event)">
+                    <!-- Column items will be generated here -->
+                </div>
+
+                <div style="display:flex;gap:10px;margin-bottom:25px;">
+                    <input type="text" id="newProjectDataColumnNameInput" placeholder="Enter column name" style="flex:1;padding:12px;background:rgba(255,255,255,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:6px;color:#e0e0e0;font-size:14px;transition:all 0.3s;" onfocus="this.style.background='rgba(10,155,3,0.1)';this.style.borderColor='rgba(10,155,3,0.6)'" onblur="this.style.background='rgba(255,255,255,0.08)';this.style.borderColor='rgba(10,155,3,0.3)'" onkeypress="if(event.key==='Enter') addNewProjectDataColumn();">
+                    <button type="button" onclick="addNewProjectDataColumn()" style="padding:12px 24px;background:linear-gradient(135deg,#0a9b03 0%,#15c524 100%);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;display:flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;">
+                        <i class="fa-solid fa-plus"></i> Add Column
+                    </button>
+                </div>
+
+                <div style="display:flex;gap:10px;">
+                    <button type="button" onclick="saveProjectDataColumnSettings()" style="flex:1;padding:12px;background:linear-gradient(135deg,#0a9b03 0%,#15c524 100%);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;display:flex;align-items:center;justify-content:center;gap:8px;">
+                        <i class="fa-solid fa-check"></i> Save & Close
+                    </button>
+                    <button type="button" onclick="closeConfigureProjectDataColumnsModal()" style="flex:1;padding:12px;background:rgba(160,160,160,0.2);color:#a0a0a0;border:1px solid rgba(160,160,160,0.4);border-radius:6px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s;display:flex;align-items:center;justify-content:center;gap:8px;">
+                        <i class="fa-solid fa-times"></i> Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</html>       

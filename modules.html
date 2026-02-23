@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LTISC - Modules</title>
+  <link rel="stylesheet" href="modules.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="header-content">
+    <div class="logo-section">
+      <i class="fa-solid fa-cube"></i>
+      <span class="logo-text">Lead Tech Industrial Solutions Corporation</span>
+    </div>
+    <div class="header-right">
+      <button id="adminPortalBtn" class="user-role" style="display:none !important;">
+        <i class="fa-solid fa-shield"></i> ADMIN
+      </button>
+      <button id="settingsBtn" class="user-role" style="display:none; background:#0a9b03;" title="Change Password">
+        <i class="fa-solid fa-gear"></i> Settings
+      </button>
+      <button id="logoutBtn" class="logout-btn">Logout</button>
+    </div>
+  </div>
+</header>
+
+<main class="modules-container">
+  <!-- Modules Grid -->
+  <div class="modules-section">
+    <div class="modules-grid">
+      <!-- Inventory Module -->
+      <div class="module-card" data-module="inventory">
+        <div class="card-header">
+          <div class="module-icon">
+            <i class="fa-solid fa-boxes-stacked"></i>
+          </div>
+        </div>
+        <div class="card-body">
+          <h2>Inventory Management</h2>
+          <p>Manage your inventory system with real-time tracking, automated reports, and comprehensive analytics</p>
+          <ul class="features-list">
+            <li><i class="fa-solid fa-chart-line"></i> Real-time stock tracking</li>
+            <li><i class="fa-solid fa-warehouse"></i> Warehouse management</li>
+            <li><i class="fa-solid fa-file-lines"></i> Automated reports</li>
+          </ul>
+        </div>
+        <a href="dashboard.html" class="module-btn">
+          <span>Access Module</span>
+          <i class="fa-solid fa-arrow-right"></i>
+        </a>
+      </div>
+
+      <!-- Purchasing Module -->
+      <div class="module-card" data-module="purchasing">
+        <div class="card-header">
+          <div class="module-icon">
+            <i class="fa-solid fa-shopping-cart"></i>
+          </div>
+        </div>
+        <div class="card-body">
+          <h2>Purchasing Management</h2>
+          <p>Manage procurement, process purchase orders, and track vendor performance efficiently</p>
+          <ul class="features-list">
+            <li><i class="fa-solid fa-file-invoice"></i> Purchase order management</li>
+            <li><i class="fa-solid fa-handshake"></i> Vendor tracking</li>
+            <li><i class="fa-solid fa-money-bill-wave"></i> Budget monitoring</li>
+          </ul>
+        </div>
+        <button class="module-btn">
+          <span>Access Module</span>
+          <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </div>
+
+      <!-- Finance Module -->
+      <div class="module-card" data-module="finance">
+        <div class="card-header">
+          <div class="module-icon">
+            <i class="fa-solid fa-coins"></i>
+          </div>
+        </div>
+        <div class="card-body">
+          <h2>Finance Management</h2>
+          <p>Monitor financial performance, track expenses, and manage budgets across all departments</p>
+          <ul class="features-list">
+            <li><i class="fa-solid fa-chart-pie"></i> Financial analytics</li>
+            <li><i class="fa-solid fa-receipt"></i> Expense tracking</li>
+            <li><i class="fa-solid fa-calculator"></i> Budget forecasting</li>
+          </ul>
+        </div>
+        <button class="module-btn">
+          <span>Access Module</span>
+          <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </div>
+
+      <!-- Attendance Module -->
+      <div class="module-card" data-module="attendance">
+        <div class="card-header">
+          <div class="module-icon">
+            <i class="fa-solid fa-calendar-check"></i>
+          </div>
+        </div>
+        <div class="card-body">
+          <h2>Attendance Management</h2>
+          <p>Track employee attendance, manage schedules, and generate insights on workforce patterns</p>
+          <ul class="features-list">
+            <li><i class="fa-solid fa-clock"></i> Daily attendance tracking</li>
+            <li><i class="fa-solid fa-calendar"></i> Schedule management</li>
+            <li><i class="fa-solid fa-chart-bar"></i> Performance reports</li>
+          </ul>
+        </div>
+        <a href="attendance.html" class="module-btn">
+          <span>Access Module</span>
+          <i class="fa-solid fa-arrow-right"></i>
+        </a>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Password Change Modal -->
+<div id="passwordModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2000;justify-content:center;align-items:center;">
+  <div style="background:white;padding:30px;border-radius:8px;max-width:400px;width:90%;">
+    <h2 style="margin-top:0;color:#1a3a52;">Change Password</h2>
+    <form id="passwordForm">
+      <div style="margin:15px 0;">
+        <label style="display:block;color:#333;font-weight:600;margin-bottom:5px;">Current Password</label>
+        <input type="password" id="currentPassword" required style="width:100%;padding:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+      </div>
+      <div style="margin:15px 0;">
+        <label style="display:block;color:#333;font-weight:600;margin-bottom:5px;">New Password</label>
+        <input type="password" id="newPassword" required style="width:100%;padding:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+      </div>
+      <div style="margin:15px 0;">
+        <label style="display:block;color:#333;font-weight:600;margin-bottom:5px;">Confirm Password</label>
+        <input type="password" id="confirmPassword" required style="width:100%;padding:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+      </div>
+      <div style="display:flex;gap:10px;margin-top:20px;">
+        <button type="submit" style="flex:1;background:#0a9b03;color:white;border:none;padding:10px;border-radius:4px;cursor:pointer;font-weight:600;">Change</button>
+        <button type="button" id="closePasswordModal" style="flex:1;background:#ccc;color:#333;border:none;padding:10px;border-radius:4px;cursor:pointer;font-weight:600;">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script type="module" src="modules.js"></script>
+</body>
+</html>

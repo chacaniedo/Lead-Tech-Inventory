@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LTISC Inventory - Login</title>
+  <link rel="stylesheet" href="login.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+
+<div class="login-container">
+  <div class="login-card">
+    <div class="login-header">
+      <h1><i class="fa-solid fa-box"></i>LTISC SYSTEM</h1>
+    </div>
+
+    <form id="loginForm">
+      <div class="form-group">
+        <input type="email" id="email" placeholder="Email Address" required>
+      </div>
+
+      <div class="form-group password-wrapper">
+        <input type="password" id="password" placeholder="Password" required>
+        <i class="fa-solid fa-eye" id="togglePassword"></i>
+      </div>
+
+      <a href="javascript:void(0)" class="forgot-password" id="forgotPasswordBtn">Forgot password?</a>
+
+      <button type="button" id="loginBtn">Login</button>
+    </form>
+  </div>
+</div>
+
+<!-- Forgot Password Modal -->
+<div class="modal" id="forgotPasswordModal">
+  <div class="modal-content" style="width: 420px; max-width: 90%;">
+    <div class="modal-header">
+      <h2>Reset Password</h2>
+      <button class="modal-close" id="closeForgotModal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p>Enter your email address and we'll send you a link to reset your password.</p>
+      <input type="email" id="forgotPasswordEmail" placeholder="Enter your email address" required>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" id="cancelForgotBtn">Cancel</button>
+      <button class="btn-save" id="sendResetBtn">Send Reset Link</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="login.js"></script>
+</body>
+</html>
