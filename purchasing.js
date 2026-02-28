@@ -1,24 +1,3 @@
-//When adding an item in the Purchasing module, the system should require the user to enter a PO (Purchase Order) number.
-
-//Once the PO number is entered, the system should automatically fetch and display the corresponding PO details in the Material Processing tab.
-
-//Since the workflow is Material Request → Purchase Order → Material Processing, the Purchase Order in the Material Processing module must be linked to the Purchasing module. This is important so we can track the Purchase Order with complete and accurate details.
-
-//Additionally, when adding an item inside the project and entering the PO number, the system should auto-populate the following information:
-
-//Material Request (MR) Number
-
-//PO Date
-
-//Material Description / Specifications
-
-//Quantity
-
-
-// ============================================================
-// PURCHASING APPLICATION - MAIN JAVASCRIPT FILE
-// ============================================================
-
 console.log('🚀 Purchasing.js module loading...');
 
 // Import Firebase functions
@@ -54,7 +33,11 @@ import {
     where,
     getDoc,
     doc,
-    deleteDoc
+    deleteDoc,
+    checkUserPermission,
+  checkModuleAccess,
+    getPermissionErrorMessage,
+    loadUserPermissions,
 } from "./firebase.js";
 import { onAuthStateChanged, signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import { updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
@@ -881,8 +864,6 @@ function cancelRemoveProjectItem() {
     document.getElementById('deleteConfirmationModal').style.display = 'none';
 }
 
-
-
 // ============================================================
 // INITIALIZATION & AUTHENTICATION
 // ============================================================
@@ -890,13 +871,21 @@ function cancelRemoveProjectItem() {
 // Check authentication on page load
 window.addEventListener('DOMContentLoaded', function() {
     try {
-        onAuthStateChanged(auth, (user) => {
+        onAuthStateChanged(auth, async (user) => {
             try {
                 if (!user) {
                     window.location.href = "index.html";
                 } else {
                     const session = getUserSession();
                     console.log("✅ User authenticated:", session);
+
+                    // Load user permissions
+                    try {
+                        await loadUserPermissions(user.uid);
+                        console.log("✅ User permissions loaded");
+                    } catch (e) {
+                        console.warn("⚠️ Error loading permissions:", e);
+                    }
 
                     // START PRE-LOADING DATA IN BACKGROUND IMMEDIATELY
                     console.log('🚀 Starting background data pre-load...');
@@ -923,6 +912,52 @@ window.addEventListener('DOMContentLoaded', function() {
         });
     } catch (e) {
         console.error('❌ DOMContentLoaded error:', e);
+    }
+});
+
+// Close profile modal handler
+document.addEventListener('DOMContentLoaded', function() {
+    const closeProfileBtn = document.getElementById('closeProfileBtn');
+    if (closeProfileBtn) {
+        closeProfileBtn.addEventListener('click', function() {
+            const profileModal = document.getElementById('userProfileModal');
+            if (profileModal) {
+                profileModal.style.display = 'none';
+            }
+        });
+    }
+    
+    // Show profile modal when PURCHASING button is clicked
+    const purchasingBtn = document.getElementById('currentUserRole');
+    if (purchasingBtn) {
+        purchasingBtn.addEventListener('click', async function() {
+            try {
+                const user = auth.currentUser;
+                if (user) {
+                    const userSnap = await getDoc(doc(db, "admin_users", user.uid));
+                    if (userSnap.exists()) {
+                        const userData = userSnap.data();
+                        // Populate profile modal
+                        const initial = userData.name ? userData.name.charAt(0).toUpperCase() : "A";
+                        document.getElementById("profileInitial").textContent = initial;
+                        document.getElementById("profileName").textContent = userData.name || "User";
+                        document.getElementById("profileRole").textContent = (userData.role || "user").toUpperCase();
+                        document.getElementById("profileEmail").textContent = user.email || "N/A";
+                        document.getElementById("profileRoleFull").textContent = userData.role ? userData.role.charAt(0).toUpperCase() + userData.role.slice(1) : "User";
+                        document.getElementById("profileStatus").innerHTML = `<i class="fa-solid fa-circle"></i> ${userData.status === "active" ? "Active" : "Inactive"}`;
+                        document.getElementById("profileStatus").style.color = userData.status === "active" ? "#1dd1a1" : "#ff6b6b";
+                        
+                        // Show profile modal
+                        const profileModal = document.getElementById("userProfileModal");
+                        if (profileModal) {
+                            profileModal.style.display = "flex";
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('⚠️ Error displaying user profile:', e);
+            }
+        });
     }
 });
 
@@ -962,6 +997,7 @@ window.addPaymentRecord = addPaymentRecord;
 window.refreshPaymentDetailsDisplay = refreshPaymentDetailsDisplay;
 window.updateProjectItems = updateProjectItems;
 window.showNotification = showNotification;
+
 
 // ============================================================
 // NOTIFICATION SYSTEM
@@ -2974,6 +3010,19 @@ async function getCurrentUserNameForActivityLog() {
 
 // Open Add Project Modal
 function openAddProjectModal() {
+    console.log('🔐 ===== CREATE PERMISSION CHECK ===== ');
+    const hasCreatePermission = checkUserPermission('purchasing', 'create');
+    console.log('Create permission result:', hasCreatePermission);
+    
+    // Check permission to create
+    if (!hasCreatePermission) {
+      const message = getPermissionErrorMessage('purchasing', 'create');
+      console.log('🚫 BLOCKING CREATE');
+      alert(message);
+      return;
+    }
+    
+    console.log('✅ Create permission granted, opening modal');
     // make sure the cache is up-to-date; this will also re-populate the datalists
     // in case the user has just added/edited a project in the management page.
     fetchMainProjects(true).catch(e => console.warn('autocomplete preload failed', e));
@@ -3004,6 +3053,18 @@ let currentEditingProjectId = null;
 function saveProjectRecord(event) {
     event.preventDefault();
 
+    // Check if user is editing or creating
+    const editingProjectId = localStorage.getItem('editingProjectId');
+    const isEditing = editingProjectId !== null && editingProjectId !== '';
+    
+    // Check permissions - BLOCK immediately if denied
+    const action = isEditing ? 'edit' : 'create';
+    if (!checkUserPermission('purchasing', action)) {
+        console.log("❌ PERMISSION DENIED - BLOCKING ACTION");
+        showNotification(getPermissionErrorMessage('purchasing', action), 'error');
+        return;
+    }
+
     // Get form values
     const projectID = document.getElementById('addProjectID').value.trim();
     const clientName = document.getElementById('addProjectClient').value.trim();
@@ -3014,7 +3075,7 @@ function saveProjectRecord(event) {
     const status = document.getElementById('addProjectStatus').value.trim();
 
     if (!clientName) {
-        alert('❌ Client name is required!');
+        showNotification('❌ Client name is required!', 'error');
         return;
     }
 
@@ -3252,6 +3313,19 @@ function editProject(projectId) {
 
 // Delete Project
 function deleteProject(projectId, projectName) {
+    console.log('🔐 ===== DELETE PERMISSION CHECK ===== ');
+    const hasDeletePermission = checkUserPermission('purchasing', 'delete');
+    console.log('Delete permission result:', hasDeletePermission);
+    
+    // Check delete permission - BLOCK immediately if denied
+    if (!hasDeletePermission) {
+        const message = getPermissionErrorMessage('purchasing', 'delete');
+        console.log('🚫 BLOCKING DELETE - showing notification');
+        showNotification(message, 'error');
+        return;
+        return;
+    }
+    
     // Store the project ID and name for confirmation
     window.pendingDeleteProjectId = projectId;
     window.pendingDeleteProjectName = projectName;
@@ -3867,6 +3941,27 @@ function collectDynamicFormData(isEditMode = false) {
         itemData.remainingPayable = (itemData.totalAmount || 0) - (itemData.paidAmount || 0);
     }
     
+    // Calculate Delivery Status based on received quantity vs total quantity
+    // This ensures the Purchase Order Tracking page status matches the Delivery Receipt status
+    if (itemData.status && itemData.status.toLowerCase() === 'cancelled') {
+        itemData.deliveryStatus = 'CANCELLED';
+    } else {
+        const quantity = itemData.quantity || 0;
+        const receivedQty = itemData.receivedQty || 0;
+        
+        if (quantity > 0) {
+            if (receivedQty >= quantity) {
+                itemData.deliveryStatus = 'FULLY RECEIVED';
+            } else if (receivedQty > 0) {
+                itemData.deliveryStatus = 'PARTIALLY RECEIVED';
+            } else {
+                itemData.deliveryStatus = 'PENDING';
+            }
+        } else {
+            itemData.deliveryStatus = 'PENDING';
+        }
+    }
+    
     return itemData;
 }
 
@@ -4467,6 +4562,22 @@ function calculateEditItemRemainingPayable() {
 
 // Edit Project Item
 function editProjectItem(index) {
+    console.log('🔐 ===== EDIT PERMISSION CHECK ===== ');
+    console.log('Checking if user can edit in purchasing module');
+    console.log('Current permissions:', JSON.stringify(currentUserPermissions, null, 2));
+    
+    // Check permission to edit
+    const hasEditPermission = checkUserPermission('purchasing', 'edit');
+    console.log('Edit permission result:', hasEditPermission);
+    
+    if (!hasEditPermission) {
+      const message = getPermissionErrorMessage('purchasing', 'edit');
+      console.log('🚫 BLOCKING EDIT - showing alert:', message);
+      alert(message);
+      return;
+    }
+    
+    console.log('✅ Edit permission granted, proceeding with edit');
     const currentProjectId = localStorage.getItem('currentProjectId');
 
     console.log('🔍 editProjectItem called with index:', index, 'type:', typeof index);
@@ -4931,6 +5042,13 @@ function autoUpdateDeliveryStatus() {
 function saveEditItemRecord(event) {
     event.preventDefault();
 
+    // 🔐 CHECK PERMISSION: User must have edit permission in purchasing module
+    if (!checkUserPermission('purchasing', 'edit')) {
+        console.log("❌ PERMISSION DENIED - BLOCKING EDIT");
+        showNotification(getPermissionErrorMessage('purchasing', 'edit'), 'error');
+        return;
+    }
+
     // CRITICAL: Validate dynamic form fields
     if (!validateDynamicFormFields()) {
         return;
@@ -5074,9 +5192,16 @@ function saveEditItemRecord(event) {
 
 // Delete Project Item
 function deleteProjectItem(index) {
+    // 🔐 CHECK PERMISSION: User must have delete permission in purchasing module
+    if (!checkUserPermission('purchasing', 'delete')) {
+        console.log("❌ PERMISSION DENIED - BLOCKING DELETE");
+        showNotification(getPermissionErrorMessage('purchasing', 'delete'), 'error');
+        return;
+    }
+    
     const currentProjectId = localStorage.getItem('currentProjectId');
     if (!currentProjectId) {
-        alert('❌ No project selected');
+        showNotification('❌ No project selected', 'error');
         return;
     }
 
@@ -5109,6 +5234,15 @@ function deleteProjectItem(index) {
 
 // Confirm delete project item
 function confirmDeleteProjectItem() {
+    // 🔐 CHECK PERMISSION: User must have delete permission in purchasing module
+    if (!checkUserPermission('purchasing', 'delete')) {
+        alert(getPermissionErrorMessage('purchasing', 'delete'));
+        document.getElementById('deleteConfirmationModal').style.display = 'none';
+        window.pendingDeleteItemIndex = undefined;
+        window.pendingDeleteItemProjectId = null;
+        return;
+    }
+
     const itemIndex = window.pendingDeleteItemIndex;
     const projectId = window.pendingDeleteItemProjectId;
 
@@ -5224,9 +5358,98 @@ function cancelDeleteProjectItem() {
     document.getElementById('deleteConfirmationModal').style.display = 'none';
 }
 
+// ============================================================
+// PO SPLITTING VALIDATION - Handle Multiple POs from Same MR
+// ============================================================
+/**
+ * Validate PO splitting requirements:
+ * - Same MR + Same Supplier = Same PO ✓
+ * - Same MR + Different Suppliers = Different POs (must be split)
+ * 
+ * @param {Object} itemData - The item data being saved
+ * @param {Array} existingItems - Existing items in the project
+ * @returns {Object} {isValid, message, recommendedPO}
+ */
+function validatePOSplitting(itemData, existingItems) {
+    const mrNumber = itemData.mrNumber?.trim();
+    const currentSupplier = itemData.vendor?.trim();
+    const currentPO = itemData.poNumber?.trim();
+    
+    if (!mrNumber || !currentSupplier) {
+        return { isValid: true, message: '' };
+    }
+    
+    // Find existing items with the same MR
+    const itemsWithSameMR = existingItems.filter(item => 
+        item.mrNumber?.trim() === mrNumber
+    );
+    
+    if (itemsWithSameMR.length === 0) {
+        // First item with this MR - no validation needed
+        console.log(`✅ First item with MR: ${mrNumber}`);
+        return { isValid: true, message: '' };
+    }
+    
+    // Check if there are items with different suppliers
+    const suppliersInMR = [...new Set(itemsWithSameMR.map(item => item.vendor?.trim()).filter(s => s))];
+    
+    if (suppliersInMR.includes(currentSupplier)) {
+        // Same supplier exists for this MR - can use same PO (recommended)
+        const existingItemWithSupplier = itemsWithSameMR.find(item => 
+            item.vendor?.trim() === currentSupplier
+        );
+        
+        if (existingItemWithSupplier && existingItemWithSupplier.poNumber) {
+            return {
+                isValid: true,
+                message: `✅ Using PO: ${existingItemWithSupplier.poNumber} (same supplier for MR: ${mrNumber})`,
+                recommendedPO: existingItemWithSupplier.poNumber,
+                poExistsForSupplier: true
+            };
+        }
+        
+        return { isValid: true, message: '' };
+    } else {
+        // Different supplier - requires different PO
+        const differentSuppliers = suppliersInMR.join(', ');
+        
+        return {
+            isValid: true, // Allow save but with warning
+            message: `⚠️ MR ${mrNumber} has items from different suppliers (${differentSuppliers}). `,
+            requiresDifferentPO: true,
+            existingSuppliers: suppliersInMR,
+            currentSupplier: currentSupplier
+        };
+    }
+}
+
+/**
+ * Auto-generate PO number for different supplier in same MR
+ * Format: PO-XXXXX-A, PO-XXXXX-B, etc. or PO-XXXXX-S2, PO-XXXXX-S3
+ */
+function generateSplitPONumber(basePO, supplierIndex) {
+    if (!basePO) return 'PO-' + Date.now();
+    
+    // If PO already has a suffix, replace it
+    const poBase = basePO.replace(/-[A-Z0-9]+$/, '');
+    
+    // Suffix can be: -A, -B, -C or -S2, -S3, etc.
+    const suffix = String.fromCharCode(65 + supplierIndex); // A, B, C, etc.
+    return poBase + '-' + suffix;
+}
+
 // Save Item Record
 function saveItemRecord(event) {
     event.preventDefault();
+
+    // 🔐 CHECK PERMISSION: User must have create/edit permission in purchasing module
+    const editingItemIndex = localStorage.getItem('editingItemIndex');
+    const requiredAction = (!editingItemIndex || editingItemIndex === '') ? 'create' : 'edit';
+    
+    if (!checkUserPermission('purchasing', requiredAction)) {
+        alert(getPermissionErrorMessage('purchasing', requiredAction));
+        return;
+    }
 
     // CRITICAL: Validate dynamic form fields
     if (!validateDynamicFormFields()) {
@@ -5234,7 +5457,6 @@ function saveItemRecord(event) {
     }
 
     const currentProjectId = localStorage.getItem('currentProjectId');
-    const editingItemIndex = localStorage.getItem('editingItemIndex');
 
     if (!currentProjectId) {
         alert('❌ No project selected');
@@ -5247,6 +5469,68 @@ function saveItemRecord(event) {
     // Delivery Date field removed; no fallback required
 
     console.log('📝 Item data being saved:', itemData);
+    
+    // ============================================================
+    // PO SPLITTING VALIDATION - Handle MR with multiple suppliers
+    // ============================================================
+    // Get existing projects to check for PO splitting requirements
+    (async function() {
+        try {
+            const projects = await getProjects();
+            const projectIndex = projects.findIndex(p => p.id === currentProjectId);
+
+            if (projectIndex === -1) {
+                showNotification('Project not found', 'error');
+                return;
+            }
+
+            const existingItems = projects[projectIndex].items || [];
+            
+            // If not editing, validate PO splitting for new items
+            if (!editingItemIndex || editingItemIndex === '') {
+                const validation = validatePOSplitting(itemData, existingItems);
+                
+                if (validation.requiresDifferentPO && !editingItemIndex) {
+                    // Show warning about different suppliers
+                    const message = `⚠️ MR ${itemData.mrNumber} has items from different suppliers.\n\n` +
+                        `Existing suppliers: ${validation.existingSuppliers.join(', ')}\n` +
+                        `Current supplier: ${validation.currentSupplier}\n\n` +
+                        `These will need separate POs because purchases from different suppliers happen at different times.\n\n` +
+                        `Continue adding this item with a separate PO?`;
+                    
+                    if (!confirm(message)) {
+                        return; // User cancelled
+                    }
+                    
+                    // Auto-suggest a new PO number if supplier is different
+                    const supplierIndex = validation.existingSuppliers.length;
+                    const suggestedPO = generateSplitPONumber(itemData.poNumber, supplierIndex);
+                    itemData.poNumber = suggestedPO;
+                    
+                    console.log(`🔀 PO split detected. Generated new PO: ${suggestedPO} for supplier: ${validation.currentSupplier}`);
+                    showNotification(`✅ New PO generated: ${suggestedPO} for different supplier`, 'success');
+                } else if (validation.poExistsForSupplier && !editingItemIndex) {
+                    // Same supplier exists - update PO to match
+                    if (itemData.poNumber !== validation.recommendedPO) {
+                        console.log(`🔗 Linking to existing PO: ${validation.recommendedPO} for same supplier`);
+                    }
+                    itemData.poNumber = validation.recommendedPO;
+                }
+            }
+            
+            // Continue with normal save process
+            continueItemSave(itemData, editingItemIndex, currentProjectId, projects, projectIndex);
+        } catch (error) {
+            console.error('❌ Error during PO validation:', error);
+            showNotification('Error validating PO: ' + error.message, 'error');
+        }
+    })();
+}
+
+/**
+ * Continue with item save after PO validation
+ */
+function continueItemSave(itemData, editingItemIndex, currentProjectId, projects, projectIndex) {
     // Automatically calculate Remaining Payable = Total Amount - Paid Amount
     itemData.remainingPayable = itemData.totalAmount - itemData.paidAmount;
 
@@ -5270,15 +5554,6 @@ function saveItemRecord(event) {
     console.log('🔍 P.O Date in itemData:', itemData.poDate);
     (async function() {
         try {
-            // Get existing projects
-            const projects = await getProjects();
-            const projectIndex = projects.findIndex(p => p.id === currentProjectId);
-
-            if (projectIndex === -1) {
-                showNotification('Project not found', 'error');
-                return;
-            }
-
             // Initialize items array if it doesn't exist
             if (!projects[projectIndex].items) {
                 projects[projectIndex].items = [];
@@ -6380,47 +6655,146 @@ function openProjectPOItemsModal(projectId) {
         try {
             // Enrich items with material data
             let enrichedItems = await Promise.all(items.map(async (item) => {
+                let materialData = null;
+                
                 try {
                     // Try fetching material by document ID
                     if (item.materialId) {
                         const matRef = doc(db, 'materials', item.materialId);
                         const matSnap = await getDoc(matRef);
                         if (matSnap && matSnap.exists()) {
-                            const materialData = matSnap.data();
-                            return {
-                                ...item,
-                                fetchedItemCode: materialData.itemCode || item.itemCode || item.materialId,
-                                fetchedCost: materialData.cost || materialData.price || item.unitPrice
-                            };
+                            materialData = matSnap.data();
+                            console.log('✅ Found material by ID:', item.materialId, materialData);
                         }
                     }
                 } catch (e) {
                     console.log('⚠️ Could not fetch material by ID for', item.materialId, e);
                 }
                 
-                // Try matching by itemCode field
-                try {
-                    if (item.itemCode) {
-                        const materialQuery = query(collection(db, 'materials'), where('itemCode', '==', item.itemCode));
-                        const materialDocs = await getDocs(materialQuery);
-                        if (!materialDocs.empty) {
-                            const materialData = materialDocs.docs[0].data();
-                            return {
-                                ...item,
-                                fetchedItemCode: materialData.itemCode || item.itemCode || item.materialId,
-                                fetchedCost: materialData.cost || materialData.price || item.unitPrice
-                            };
+                // If not found by ID, try matching by itemCode field
+                if (!materialData) {
+                    try {
+                        if (item.itemCode) {
+                            const materialQuery = query(collection(db, 'materials'), where('itemCode', '==', item.itemCode));
+                            const materialDocs = await getDocs(materialQuery);
+                            if (!materialDocs.empty) {
+                                materialData = materialDocs.docs[0].data();
+                                console.log('✅ Found material by itemCode:', item.itemCode, materialData);
+                            }
                         }
+                    } catch (e) {
+                        console.log('⚠️ Could not query material by itemCode for', item.itemCode, e);
                     }
-                } catch (e) {
-                    console.log('⚠️ Could not query material by itemCode for', item.itemCode, e);
                 }
                 
-                // Fallback values
+                // Extract material name with extensive fallback options
+                let fetchedMaterialName = '-';
+                if (materialData) {
+                    console.log('📌 Material data found for', item.itemCode, 'Fields:', Object.keys(materialData));
+                    // Check materialtype FIRST - it's the primary material name field
+                    fetchedMaterialName = materialData.materialtype ||
+                                         materialData.materialType ||
+                                         materialData.material ||
+                                         materialData.materialName || 
+                                         materialData.steelType ||
+                                         materialData.grade ||
+                                         materialData.materialGrade ||
+                                         materialData.productType ||
+                                         materialData.productName ||
+                                         materialData.itemName || 
+                                         materialData.name || 
+                                         materialData.description || 
+                                         materialData.materialDescription ||
+                                         materialData.itemDescription ||
+                                         materialData.title ||
+                                         materialData.label ||
+                                         materialData.type ||
+                                         materialData.category || '-';
+                    console.log('🏷️ Extracted material name:', fetchedMaterialName);
+                }
+                
+                // If still no material name from database, use item properties
+                if (fetchedMaterialName === '-' && item) {
+                    console.log('⚡ Trying item properties for', item.itemCode);
+                    fetchedMaterialName = item.materialtype ||
+                                         item.materialType ||
+                                         item.material ||
+                                         item.materialName || 
+                                         item.steelType ||
+                                         item.grade ||
+                                         item.materialGrade ||
+                                         item.productType ||
+                                         item.productName ||
+                                         item.itemName || 
+                                         item.name || 
+                                         item.description || 
+                                         item.materialDescription ||
+                                         item.itemDescription ||
+                                         item.title ||
+                                         item.label ||
+                                         item.type ||
+                                         item.category || '-';
+                    console.log('⚡ Item property result:', fetchedMaterialName);
+                }
+                
+                if (fetchedMaterialName === '-') {
+                    console.warn('❌ No material name found for item:', item.itemCode, 'Item data:', JSON.stringify(item));
+                }
+                
+                // Extract cost with extensive fallback options
+                let fetchedCost = 0;
+                if (materialData) {
+                    fetchedCost = materialData.cost || 
+                                 materialData.price || 
+                                 materialData.unitCost || 
+                                 materialData.unitPrice ||
+                                 materialData.rate ||
+                                 materialData.sellingPrice ||
+                                 0;
+                }
+                
+                // If still 0, try item properties
+                if (fetchedCost === 0 && item) {
+                    fetchedCost = item.unitPrice || 
+                                 item.cost || 
+                                 item.price || 
+                                 item.unitCost ||
+                                 item.rate ||
+                                 0;
+                }
+                
+                // Extract best supplier with extensive fallback options
+                let fetchedBestSupplier = 'N/A';
+                if (materialData) {
+                    fetchedBestSupplier = materialData.bestSupplier || 
+                                         materialData.supplier || 
+                                         materialData.vendor || 
+                                         materialData.preferredSupplier ||
+                                         materialData.mainSupplier ||
+                                         materialData.supplierName ||
+                                         'N/A';
+                }
+                
+                // If still N/A, try item properties
+                if (fetchedBestSupplier === 'N/A' && item) {
+                    fetchedBestSupplier = item.bestSupplier || 
+                                         item.supplier || 
+                                         item.vendor || 
+                                         item.itemVendor ||
+                                         item.preferredSupplier ||
+                                         item.mainSupplier ||
+                                         item.supplierName ||
+                                         'N/A';
+                }
+                
+                console.log('📊 Enriched Item:', item.itemCode, {cost: fetchedCost, supplier: fetchedBestSupplier, material: fetchedMaterialName});
+                
                 return {
                     ...item,
-                    fetchedItemCode: item.itemCode || item.materialId || '-',
-                    fetchedCost: item.unitPrice || 0
+                    fetchedItemCode: materialData?.itemCode || item.itemCode || item.materialId || '-',
+                    fetchedCost: fetchedCost,
+                    fetchedBestSupplier: fetchedBestSupplier,
+                    fetchedMaterialName: fetchedMaterialName
                 };
             }));
             
@@ -6438,12 +6812,13 @@ function openProjectPOItemsModal(projectId) {
                                 <tr style="background:rgba(10,155,3,0.2);border-bottom:2px solid rgba(10,155,3,0.5);">
                                     <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;">Item #</th>
                                     <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;">Item Code</th>
-                                    <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;">Description</th>
+                                    <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;">Material</th>
+                                    <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;">Specification</th>
                                     <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;">P.O No.</th>
                                     <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;">Quantity</th>
                                     <th style="padding:12px;text-align:right;color:#0a9b03;font-weight:600;">Cost</th>
                                     <th style="padding:12px;text-align:right;color:#0a9b03;font-weight:600;">Total Amount</th>
-                                    <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;">Vendor</th>
+                                    <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;">Best Supplier</th>
                                     <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;">Status</th>
                                 </tr>
                             </thead>
@@ -6456,7 +6831,9 @@ function openProjectPOItemsModal(projectId) {
                 const qty = parseFloat(item.quantity || 0);
                 const cost = parseFloat(item.fetchedCost || 0);
                 const totalAmount = qty * cost;
-                const vendor = item.vendor || item.itemVendor || 'N/A';
+                const vendor = item.fetchedBestSupplier || item.vendor || item.itemVendor || 'N/A';
+                // CHECK ITEM'S OWN MATERIAL FIELD FIRST before fetched material
+                const materialName = item.material || item.materialName || item.itemName || item.fetchedMaterialName || '-';
                 const description = item.specification || item.itemDescription || '-';
                 const poNo = item.poNumber || '-';
                 const status = item.status || 'Pending';
@@ -6468,6 +6845,7 @@ function openProjectPOItemsModal(projectId) {
                     <tr style="border-bottom:1px solid rgba(10,155,3,0.1);">
                         <td style="padding:12px;color:#e0e0e0;">${item.itemNumber || (index + 1)}</td>
                         <td style="padding:12px;color:#15c524;font-weight:600;">${itemCode}</td>
+                        <td style="padding:12px;color:#e0e0e0;max-width:150px;word-wrap:break-word;">${materialName}</td>
                         <td style="padding:12px;color:#e0e0e0;max-width:200px;word-wrap:break-word;">${description}</td>
                         <td style="padding:12px;color:#e0e0e0;">${poNo}</td>
                         <td style="padding:12px;color:#e0e0e0;text-align:right;">${qty.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
@@ -6975,6 +7353,7 @@ async function getAllProjectItems() {
                         id: `${project.id}_${item.itemNumber}`,
                         item: item.itemNumber || '',
                         month: item.month || item.monthOfExpense || item.itemDescription || '',
+                        material: item.material || item.materialName || item.itemDescription || item.description || '',
                         client: project.client_name || project.client || '',
                         projectName: project.projectName || '',
                         trade: Array.isArray(project.trades) ? project.trades.join(', ') : (project.trade || ''),
@@ -7068,6 +7447,7 @@ function renderTrackingTableFast(records) {
             newRow.innerHTML = `
                 <td>${i + 1}</td>
                 <td>${getMonthText(record.month)}</td>
+                <td>${record.material || '-'}</td>
                 <td>${record.client || ''}</td>
                 <td>${record.projectName || ''}</td>
                 <td>${record.trade || ''}</td>
@@ -7192,6 +7572,7 @@ function renderTrackingTablePage(pageNum) {
         newRow.innerHTML = `
             <td style="padding: 8px 12px; color: #e0e0e0;">${continuousItemNumber}</td>
             <td style="padding: 8px 12px; color: #e0e0e0;">${getMonthText(record.month)}</td>
+            <td style="padding: 8px 12px; color: #e0e0e0;">${record.material || '-'}</td>
             <td style="padding: 8px 12px; color: #e0e0e0;">${record.client || ''}</td>
             <td style="padding: 8px 12px; color: #e0e0e0;">${record.projectName || ''}</td>
             <td style="padding: 8px 12px; color: #e0e0e0;">${record.trade || ''}</td>
@@ -7253,13 +7634,24 @@ function renderTrackingTable(records) {
 // Filter Tracking by Status
 function filterTrackingByStatus(status) {
     const table = document.getElementById('materials-table');
-    const rows = table.querySelectorAll('tbody tr');
+    const tbody = table.querySelector('tbody');
+    
+    // Wait for the table to have rows before filtering
+    if (!tbody || tbody.children.length === 0) {
+        // If table is empty, schedule retry after a short delay
+        console.log('⏳ Table not ready, scheduling filter retry...');
+        setTimeout(() => filterTrackingByStatus(status), 100);
+        return;
+    }
+    
+    const rows = tbody.querySelectorAll('tr');
 
     rows.forEach(row => {
-        // Get status from the 17th column which contains the status badge
-        const statusCell = row.querySelector('td:nth-child(17)');
+        // Get status from the 18th column which contains the status badge
+        const statusCell = row.querySelector('td:nth-child(18)');
         const statusBadge = statusCell ? statusCell.querySelector('.status-badge') : null;
         const statusText = statusBadge ? statusBadge.textContent.trim().toLowerCase() : '';
+        
         if (status === 'completed') {
             row.style.display = statusText === 'completed' ? '' : 'none';
         } else if (status === 'on-going') {
@@ -7795,6 +8187,7 @@ function exportTrackingDataAsExcel() {
             return {
                 'Item': index + 1,
                 'Month': getMonthText(record.month) || '',
+                'Material': record.material || '-',
                 'Client': record.client || '',
                 'Project Name': record.projectName || '',
                 'Trade': record.trade || '',
@@ -7821,6 +8214,7 @@ function exportTrackingDataAsExcel() {
         worksheet['!cols'] = [
             { wch: 6 },   // Item
             { wch: 12 },  // Month
+            { wch: 20 },  // Material
             { wch: 14 },  // Client
             { wch: 18 },  // Project Name
             { wch: 14 },  // Trade
@@ -8109,6 +8503,7 @@ function exportTrackingDataAsPDF() {
         return {
             item: index + 1, // Continuous numbering like the table
             month: getMonthText(record.month) || '',
+            material: record.material || '-',
             client: record.client || '',
             projectName: record.projectName || '',
             trade: record.trade || '',
@@ -8132,7 +8527,7 @@ function exportTrackingDataAsPDF() {
         <html>
         <head>
             <meta charset="UTF-8">
-            <title>Purchase Tracking Report</title>
+            <title>Purchase Order Tracking Report</title>
             <style>
                 * {
                     margin: 0;
@@ -8289,7 +8684,7 @@ function exportTrackingDataAsPDF() {
         </head>
         <body>
             <div class="header">
-                <h1>Purchase Tracking Report</h1>
+                <h1>Purchase Order Tracking Report</h1>
                 <p class="generated-date">Generated on ${new Date().toLocaleDateString('en-US', { 
                     year: 'numeric', 
                     month: 'long', 
@@ -8304,6 +8699,7 @@ function exportTrackingDataAsPDF() {
                     <tr>
                         <th>Item</th>
                         <th>Month</th>
+                        <th>Material</th>
                         <th>Client</th>
                         <th>Project Name</th>
                         <th>Trade</th>
@@ -8345,6 +8741,7 @@ function exportTrackingDataAsPDF() {
                     <tr>
                         <td style="text-align: center;">${row.item}</td>
                         <td>${row.month}</td>
+                        <td>${row.material}</td>
                         <td>${row.client}</td>
                         <td>${row.projectName}</td>
                         <td>${row.trade}</td>
@@ -8649,6 +9046,17 @@ function selectDeliveryStatus(optionIndex) {
 
             // Refresh tracking table data
             refreshTrackingTableData();
+            
+            // Sync with Material Processing module - refresh Delivery Receipt tab
+            // This ensures the Delivery Receipt tab in Material Processing shows the updated status
+            if (window.refreshDeliveryReceiptsSync && typeof window.refreshDeliveryReceiptsSync === 'function') {
+                try {
+                    await window.refreshDeliveryReceiptsSync(projectId);
+                    console.log('✅ Synced delivery status with Material Processing module');
+                } catch (syncErr) {
+                    console.warn('⚠️ Could not sync with Material Processing:', syncErr);
+                }
+            }
 
         } catch (error) {
             console.error('❌ Error updating delivery status:', error);
@@ -10341,6 +10749,9 @@ window.__bindFunction('editProjectDetailsItem', editProjectDetailsItem);
 window.__bindFunction('removeProjectItem', removeProjectItem);
 window.__bindFunction('populateProjectDetailsTable', populateProjectDetailsTable);
 window.__bindFunction('saveItemRecord', saveItemRecord);
+window.__bindFunction('validatePOSplitting', validatePOSplitting);
+window.__bindFunction('generateSplitPONumber', generateSplitPONumber);
+window.__bindFunction('continueItemSave', continueItemSave);
 window.__bindFunction('calculatePOBalanceQty', calculatePOBalanceQty);
 window.__bindFunction('calculateRemainingPayable', calculateRemainingPayable);
 window.__bindFunction('preLoadAllData', preLoadAllData);
