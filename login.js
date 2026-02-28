@@ -34,120 +34,73 @@ function showAlert(message, type = "error") {
   setTimeout(() => alert.remove(), 4200);
 }
 
+function getLandingPageByRole(role) {
+  const normalizedRole = (role || "").toLowerCase();
+  if (normalizedRole === "warehouse") return "warehouse-dashboard.html";
+  if (normalizedRole === "attendance") return "attendance.html";
+  if (normalizedRole === "employee") return "employee-dashboard.html";
+  return "modules.html";
+}
+
+async function resolveUserData(user) {
+  const collectionsByPriority = [
+    "warehouse_users",
+    "inventory_users",
+    "purchasing_users",
+    "attendance_users",
+    "finance_users",
+    "admin_user",
+    "admin_users",
+    "employees"
+  ];
+
+  for (const collectionName of collectionsByPriority) {
+    const snap = await getDoc(doc(db, collectionName, user.uid));
+    if (snap.exists()) return snap.data();
+  }
+
+  for (const collectionName of collectionsByPriority) {
+    const q = query(collection(db, collectionName), where("email", "==", user.email));
+    const qSnap = await getDocs(q);
+    if (!qSnap.empty) return qSnap.docs[0].data();
+  }
+
+  return null;
+}
+
 // Check if user is already logged in - redirect based on role
 let authCheckCompleted = false;
 const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-  // Don't redirect if we're in logout mode or already checked
-  if (localStorage.getItem('authCheckDone') === 'true') return;
-  if (sessionStorage.getItem('isLoggingOut') === 'true') {
-    sessionStorage.removeItem('isLoggingOut');
+  if (localStorage.getItem("authCheckDone") === "true") return;
+  if (sessionStorage.getItem("isLoggingOut") === "true") {
+    sessionStorage.removeItem("isLoggingOut");
     return;
   }
   if (authCheckCompleted) return;
-  
-  // Wait a moment to ensure page is fully loaded before checking
+
   await new Promise(resolve => setTimeout(resolve, 100));
-  
-  if (user) {
-    try {
-      let userDocSnap = await getDoc(doc(db, "admin_user", user.uid));
-      let userData = null;
 
-      if (userDocSnap.exists()) {
-        userData = userDocSnap.data();
-      } else {
-        // Try admin_users collection (legacy)
-        userDocSnap = await getDoc(doc(db, "admin_users", user.uid));
-        if (userDocSnap.exists()) {
-          userData = userDocSnap.data();
-        } else {
-          // Try inventory_users collection
-          userDocSnap = await getDoc(doc(db, "inventory_users", user.uid));
-          if (userDocSnap.exists()) {
-            userData = userDocSnap.data();
-          } else {
-            // Try warehouse_users collection
-            userDocSnap = await getDoc(doc(db, "warehouse_users", user.uid));
-            if (userDocSnap.exists()) {
-              userData = userDocSnap.data();
-            } else {
-              // Try purchasing_users collection
-              userDocSnap = await getDoc(doc(db, "purchasing_users", user.uid));
-              if (userDocSnap.exists()) {
-                userData = userDocSnap.data();
-              } else {
-                // Try attendance_users collection
-                userDocSnap = await getDoc(doc(db, "attendance_users", user.uid));
-                if (userDocSnap.exists()) {
-                  userData = userDocSnap.data();
-                } else {
-                  // Fallback: query by email in all collections
-                  let q = query(collection(db, "admin_users"), where("email", "==", user.email));
-                  let qSnap = await getDocs(q);
-                  if (!qSnap.empty) {
-                    userData = qSnap.docs[0].data();
-                  } else {
-                    q = query(collection(db, "inventory_users"), where("email", "==", user.email));
-                    qSnap = await getDocs(q);
-                    if (!qSnap.empty) {
-                      userData = qSnap.docs[0].data();
-                    } else {
-                      q = query(collection(db, "warehouse_users"), where("email", "==", user.email));
-                      qSnap = await getDocs(q);
-                      if (!qSnap.empty) {
-                        userData = qSnap.docs[0].data();
-                      } else {
-                        q = query(collection(db, "purchasing_users"), where("email", "==", user.email));
-                        qSnap = await getDocs(q);
-                        if (!qSnap.empty) {
-                          userData = qSnap.docs[0].data();
-                        } else {
-                          q = query(collection(db, "attendance_users"), where("email", "==", user.email));
-                          qSnap = await getDocs(q);
-                          if (!qSnap.empty) {
-                            userData = qSnap.docs[0].data();
-                          } else {
-                            q = query(collection(db, "finance_users"), where("email", "==", user.email));
-                            qSnap = await getDocs(q);
-                            if (!qSnap.empty) {
-                              userData = qSnap.docs[0].data();
-                            } else {
-                              // Check employees collection
-                              q = query(collection(db, "employees"), where("email", "==", user.email));
-                              qSnap = await getDocs(q);
-                              if (!qSnap.empty) {
-                                userData = qSnap.docs[0].data();
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (userData) {
-        authCheckCompleted = true;
-        localStorage.setItem('authCheckDone', 'true');
-        unsubscribeAuth();
-        window.location.href = "modules.html";
-      }
-    } catch (e) {
-      console.error("Error checking user role:", e);
-      authCheckCompleted = true;
-      localStorage.setItem('authCheckDone', 'true');
-      unsubscribeAuth();
-      window.location.href = "modules.html";
-    }
-  } else {
+  if (!user) {
     authCheckCompleted = true;
-    localStorage.setItem('authCheckDone', 'true');
+    localStorage.setItem("authCheckDone", "true");
     unsubscribeAuth();
+    return;
+  }
+
+  try {
+    const userData = await resolveUserData(user);
+    if (userData) {
+      authCheckCompleted = true;
+      localStorage.setItem("authCheckDone", "true");
+      unsubscribeAuth();
+      window.location.href = getLandingPageByRole(userData.role);
+    }
+  } catch (e) {
+    console.error("Error checking user role:", e);
+    authCheckCompleted = true;
+    localStorage.setItem("authCheckDone", "true");
+    unsubscribeAuth();
+    window.location.href = "modules.html";
   }
 });
 
@@ -265,40 +218,40 @@ document.addEventListener("DOMContentLoaded", () => {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // Get user data from Firestore - check admin_user collection first
-      let userDocSnap = await getDoc(doc(db, "admin_user", user.uid));
+      // Get user data from Firestore - prioritize module collections before admin collections
+      let userDocSnap = await getDoc(doc(db, "warehouse_users", user.uid));
       let userData = null;
 
       if (userDocSnap.exists()) {
         userData = userDocSnap.data();
       } else {
-        // Try admin_users collection (legacy)
-        userDocSnap = await getDoc(doc(db, "admin_users", user.uid));
+        // Try inventory_users collection
+        userDocSnap = await getDoc(doc(db, "inventory_users", user.uid));
         if (userDocSnap.exists()) {
           userData = userDocSnap.data();
         } else {
-          // Try inventory_users collection
-          userDocSnap = await getDoc(doc(db, "inventory_users", user.uid));
+          // Try purchasing_users collection
+          userDocSnap = await getDoc(doc(db, "purchasing_users", user.uid));
           if (userDocSnap.exists()) {
             userData = userDocSnap.data();
           } else {
-            // Try warehouse_users collection
-            userDocSnap = await getDoc(doc(db, "warehouse_users", user.uid));
+            // Try attendance_users collection
+            userDocSnap = await getDoc(doc(db, "attendance_users", user.uid));
             if (userDocSnap.exists()) {
               userData = userDocSnap.data();
             } else {
-              // Try purchasing_users collection
-              userDocSnap = await getDoc(doc(db, "purchasing_users", user.uid));
+              // Try finance_users collection
+              userDocSnap = await getDoc(doc(db, "finance_users", user.uid));
               if (userDocSnap.exists()) {
                 userData = userDocSnap.data();
               } else {
-                // Try attendance_users collection
-                userDocSnap = await getDoc(doc(db, "attendance_users", user.uid));
+                // Try admin_user collection
+                userDocSnap = await getDoc(doc(db, "admin_user", user.uid));
                 if (userDocSnap.exists()) {
                   userData = userDocSnap.data();
                 } else {
-                  // Try finance_users collection
-                  userDocSnap = await getDoc(doc(db, "finance_users", user.uid));
+                  // Try admin_users collection (legacy)
+                  userDocSnap = await getDoc(doc(db, "admin_users", user.uid));
                   if (userDocSnap.exists()) {
                     userData = userDocSnap.data();
                   } else {
@@ -308,7 +261,7 @@ document.addEventListener("DOMContentLoaded", () => {
                       userData = userDocSnap.data();
                     } else {
                       // Fallback: query by email in all collections
-                      let q = query(collection(db, "admin_user"), where("email", "==", user.email));
+                      let q = query(collection(db, "warehouse_users"), where("email", "==", user.email));
                       let qSnap = await getDocs(q);
                       if (!qSnap.empty) {
                         userData = qSnap.docs[0].data();
@@ -318,26 +271,31 @@ document.addEventListener("DOMContentLoaded", () => {
                         if (!qSnap.empty) {
                           userData = qSnap.docs[0].data();
                         } else {
-                          q = query(collection(db, "warehouse_users"), where("email", "==", user.email));
+                          q = query(collection(db, "purchasing_users"), where("email", "==", user.email));
                           qSnap = await getDocs(q);
                           if (!qSnap.empty) {
                             userData = qSnap.docs[0].data();
                           } else {
-                            q = query(collection(db, "purchasing_users"), where("email", "==", user.email));
+                            q = query(collection(db, "attendance_users"), where("email", "==", user.email));
                             qSnap = await getDocs(q);
                             if (!qSnap.empty) {
                               userData = qSnap.docs[0].data();
                             } else {
-                              q = query(collection(db, "attendance_users"), where("email", "==", user.email));
+                              q = query(collection(db, "finance_users"), where("email", "==", user.email));
                               qSnap = await getDocs(q);
                               if (!qSnap.empty) {
                                 userData = qSnap.docs[0].data();
                               } else {
-                                q = query(collection(db, "finance_users"), where("email", "==", user.email));
+                                q = query(collection(db, "admin_user"), where("email", "==", user.email));
                                 qSnap = await getDocs(q);
                                 if (!qSnap.empty) {
                                   userData = qSnap.docs[0].data();
                                 } else {
+                                  q = query(collection(db, "admin_users"), where("email", "==", user.email));
+                                  qSnap = await getDocs(q);
+                                  if (!qSnap.empty) {
+                                    userData = qSnap.docs[0].data();
+                                  } else {
                                   // Check employees collection
                                   q = query(collection(db, "employees"), where("email", "==", user.email));
                                   qSnap = await getDocs(q);
@@ -345,6 +303,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                     userData = qSnap.docs[0].data();
                                   } else {
                                     showAlert("❌ User not found in database. Contact your administrator.", "error");
+                                  }
                                   }
                                 }
                               }
@@ -383,12 +342,13 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      console.log("✅ User authenticated successfully, redirecting to modules page...");
+      const landingPage = getLandingPageByRole(userData.role);
+      console.log("✅ User authenticated successfully, redirecting to:", landingPage);
       showAlert("✅ Login successful!", "success");
 
       setTimeout(() => {
-        console.log("🔄 Redirecting to modules.html");
-        window.location.href = "modules.html";
+        console.log("🔄 Redirecting to", landingPage);
+        window.location.href = landingPage;
       }, 1000);
 
     } catch (e) {
