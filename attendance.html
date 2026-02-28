@@ -522,6 +522,8 @@
                                     <th style="text-align:left;">Date</th>
                                     <th style="text-align:center;">Clock In</th>
                                     <th style="text-align:center;">Clock Out</th>
+                                    <th style="text-align:center;">Lunch Out</th>
+                                    <th style="text-align:center;">Lunch In</th>
                                     <th style="text-align:center;">Hours Worked</th>
                                     <th style="text-align:center;">Photos</th>
                                     <th style="text-align:center;">Status</th>
@@ -530,7 +532,7 @@
                             </thead>
                             <tbody id="attendanceTableBody">
                                 <tr class="no-data">
-                                    <td colspan="8" style="text-align:center;">Loading attendance records...</td>
+                                    <td colspan="10" style="text-align:center;">Loading attendance records...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -765,7 +767,7 @@
                     <input type="text" id="employeeName" class="form-input" placeholder="Enter employee name" required>
                 </div>
                 <div class="form-group">
-                    <label>LTISC Tagging</label>
+                    <label>LTISC Tagging (Optional)</label>
                     <input type="text" id="employeeTagging" class="form-input" placeholder="e.g., E001, E002">
                 </div>
                 <div class="form-group">
@@ -1230,8 +1232,8 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="siteManager">Site Manager/In Charge</label>
-                    <input type="text" id="siteManager" name="siteManager" placeholder="Name of site manager" required>
+                    <label for="siteManager">PIC/Time Keeper</label>
+                    <input type="text" id="siteManager" name="siteManager" placeholder="Name of PIC/Time Keeper" required>
                 </div>
 
                 <div class="form-group">
@@ -1249,20 +1251,20 @@
                     </h3>
                     
                     <div class="form-group">
-                        <label for="siteLatitude">Latitude *</label>
-                        <input type="number" id="siteLatitude" name="siteLatitude" step="any" placeholder="e.g., 14.5995" required>
+                        <label for="siteLatitude">Latitude <span style="color:#aaa;font-size:12px;font-weight:normal;">(Optional)</span></label>
+                        <input type="number" id="siteLatitude" name="siteLatitude" step="any" placeholder="e.g., 14.5995">
                         <small style="color:#888;font-size:11px;display:block;margin-top:5px;">Site's latitude coordinate</small>
                     </div>
                     
                     <div class="form-group">
-                        <label for="siteLongitude">Longitude *</label>
-                        <input type="number" id="siteLongitude" name="siteLongitude" step="any" placeholder="e.g., 120.9842" required>
+                        <label for="siteLongitude">Longitude <span style="color:#aaa;font-size:12px;font-weight:normal;">(Optional)</span></label>
+                        <input type="number" id="siteLongitude" name="siteLongitude" step="any" placeholder="e.g., 120.9842">
                         <small style="color:#888;font-size:11px;display:block;margin-top:5px;">Site's longitude coordinate</small>
                     </div>
                     
                     <div class="form-group">
-                        <label for="siteRadius">Allowed Radius (meters) *</label>
-                        <input type="number" id="siteRadius" name="siteRadius" placeholder="e.g., 100" value="100" min="10" max="1000" required>
+                        <label for="siteRadius">Allowed Radius (meters) <span style="color:#aaa;font-size:12px;font-weight:normal;">(Optional)</span></label>
+                        <input type="number" id="siteRadius" name="siteRadius" placeholder="e.g., 100" value="100" min="10" max="1000">
                         <small style="color:#888;font-size:11px;display:block;margin-top:5px;">Users can check-in within this distance from the site (10-1000m)</small>
                     </div>
                     
@@ -1270,7 +1272,7 @@
                         <i class="fa-solid fa-location-crosshairs"></i> Get Current Location
                     </button>
                     <small style="color:#888;font-size:11px;display:block;margin-top:5px;">
-                        Tips: Go to the site location and click this button, or use Google Maps to find coordinates
+                        Geofencing is optional. Leave blank to keep existing settings or update later.
                     </small>
                 </div>
 
@@ -1656,7 +1658,7 @@
                             <th style="padding: 10px; text-align: left; color: #1dd1a1;">Site Name</th>
                             <th style="padding: 10px; text-align: left; color: #1dd1a1;">Site Code</th>
                             <th style="padding: 10px; text-align: left; color: #1dd1a1;">Location</th>
-                            <th style="padding: 10px; text-align: left; color: #1dd1a1;">Site Manager</th>
+                            <th style="padding: 10px; text-align: left; color: #1dd1a1;">PIC/Time Keeper</th>
                             <th style="padding: 10px; text-align: left; color: #1dd1a1;">Employees</th>
                         </tr>
                     </thead>
@@ -1744,6 +1746,6 @@
     </div>
 
     <script type="module" src="firebase.js"></script>
-    <script type="module" src="attendance.js"></script>
+    <script type="module" src="attendance.js?v=20260223-lunch"></script>
 </body>
 </html>
