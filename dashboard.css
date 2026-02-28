@@ -1150,3 +1150,10 @@ tbody tr:last-child {
   width: 100%;
   min-width: 100%;
 }
+
+#departmentGroup,
+#designationGroup,
+#userDepartment,
+#userDesignation {
+  display: none !important;
+}
