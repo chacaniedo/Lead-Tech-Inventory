@@ -72,11 +72,11 @@
 
   <section class="inventory">
     <div style="display:grid;grid-template-columns: 1fr 1fr;gap:20px;margin-bottom:30px;">
-      <!-- Warehouse Distribution Chart (Pie) -->
+      <!-- Project Distribution Chart -->
       <div style="background:rgba(15,30,53,0.6);border:1px solid rgba(10,155,3,0.2);border-radius:8px;padding:20px;height:400px;">
-        <h3 style="margin-top:0;margin-bottom:20px;color:#0a9b03;font-size:16px;">Warehouse Distribution</h3>
+        <h3 style="margin-top:0;margin-bottom:20px;color:#0a9b03;font-size:16px;">Project Distribution</h3>
         <div style="position:relative;width:100%;height:calc(100% - 50px);">
-          <canvas id="warehouseChart"></canvas>
+          <canvas id="projectDistributionChart"></canvas>
         </div>
       </div>
 
@@ -513,9 +513,14 @@
     <div id="mrTabContent" style="display:block;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <h3 style="margin:0;color:#0a9b03;">Materials Request (MR) List</h3>
-        <button id="addMRBtn" style="background:linear-gradient(135deg, #0a9b03 0%, #15c524 100%);color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;transition:all 0.3s ease;">
-          <i class="fa-solid fa-plus"></i> Create Material Request
-        </button>
+        <div style="display:flex;gap:10px;">
+          <button id="toggleBorrowApprovalsBtn" style="background:linear-gradient(135deg, #ff9800 0%, #ffb74d 100%);color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;transition:all 0.3s ease;" onclick="window.toggleBorrowApprovalsSection()">
+            <i class="fa-solid fa-clock"></i> Pending Approvals
+          </button>
+          <button id="addMRBtn" style="background:linear-gradient(135deg, #0a9b03 0%, #15c524 100%);color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;transition:all 0.3s ease;">
+            <i class="fa-solid fa-plus"></i> Create Material Request
+          </button>
+        </div>
       </div>
 
       <!-- MR Filters -->
@@ -544,6 +549,17 @@
         </div>
       </div>
 
+      <!-- Pending Borrow Approvals Section -->
+      <div id="borrowApprovalsSection" style="margin-bottom:30px;display:none;">
+        <h3 style="margin:0 0 15px 0;color:#ff9800;font-size:16px;display:flex;align-items:center;gap:10px;">
+          <i class="fa-solid fa-clock"></i> Pending Borrow Approvals
+        </h3>
+        <div id="borrowApprovalsContainer" style="background:rgba(255,152,0,0.05);border:1px solid rgba(255,152,0,0.3);border-radius:8px;padding:20px;">
+          <p id="noBorrowApprovalsMsg" style="color:#a0a0a0;text-align:center;margin:0;">No pending borrow approvals</p>
+          <div id="borrowApprovalsList" style="display:none;"></div>
+        </div>
+      </div>
+
       <!-- MR Table -->
       <div style="overflow-x:auto;margin-bottom:20px;background:rgba(10,155,3,0.05);border:1px solid rgba(10,155,3,0.2);border-radius:8px;">
         <table id="mrTable" style="width:100%;border-collapse:collapse;">
@@ -555,6 +571,7 @@
               <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:1px solid rgba(10,155,3,0.3);font-size:12px;">Type</th>
               <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:1px solid rgba(10,155,3,0.3);font-size:12px;">Items</th>
               <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:1px solid rgba(10,155,3,0.3);font-size:12px;">Date</th>
+              <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:1px solid rgba(10,155,3,0.3);font-size:12px;">M.R Link</th>
               <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:1px solid rgba(10,155,3,0.3);font-size:12px;">Status</th>
               <th style="padding:12px;text-align:center;color:#0a9b03;font-weight:600;border-bottom:1px solid rgba(10,155,3,0.3);font-size:12px;">Action</th>
             </tr>
@@ -814,6 +831,7 @@
           <tr>
             <th>Item Code</th>
             <th>Material</th>
+            <th>Specification</th>
             <th>Expiry Date</th>
             <th>Days Remaining</th>
             <th>Project</th>
@@ -1275,7 +1293,6 @@
   <div class="modal-content" style="max-width:500px;">
     <div class="modal-header">
       <h2>My Account</h2>
-      <button id="closeProfileModal" class="close-btn">&times;</button>
     </div>
     
     <div style="padding:20px;">
@@ -1298,16 +1315,6 @@
         <div style="margin-bottom:20px;">
           <label style="display:block;color:#0a9b03;font-weight:600;font-size:12px;margin-bottom:5px;"><i class="fa-solid fa-briefcase"></i> ROLE</label>
           <p id="profileRoleFull" style="margin:0;color:#e0e0e0;">Administrator</p>
-        </div>
-
-        <div style="margin-bottom:20px;">
-          <label style="display:block;color:#0a9b03;font-weight:600;font-size:12px;margin-bottom:5px;"><i class="fa-solid fa-building"></i> DEPARTMENT</label>
-          <p id="profileDepartment" style="margin:0;color:#e0e0e0;">N/A</p>
-        </div>
-
-        <div style="margin-bottom:20px;">
-          <label style="display:block;color:#0a9b03;font-weight:600;font-size:12px;margin-bottom:5px;"><i class="fa-solid fa-tag"></i> TAGGING</label>
-          <p id="profileTagging" style="margin:0;color:#e0e0e0;">N/A</p>
         </div>
 
         <div style="margin-bottom:0;">
@@ -1365,6 +1372,9 @@
         <button id="generateReportBtn" style="background:linear-gradient(135deg, #0a9b03 0%, #15c524 100%);color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;transition:all 0.3s ease;white-space:nowrap;">
           <i class="fa-solid fa-sync"></i> Generate Report
         </button>
+        <button id="clearReportDataBtn" style="background:linear-gradient(135deg, #ff6b6b 0%, #ff5252 100%);color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;transition:all 0.3s ease;white-space:nowrap;">
+          <i class="fa-solid fa-trash"></i> Clear Data
+        </button>
       </div>
       <div style="display:flex;gap:4px;align-items:center;">
         <button id="exportReportBtn" style="background:linear-gradient(135deg, #0a9b03 0%, #15c524 100%);color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;transition:all 0.3s ease;white-space:nowrap;">
@@ -1382,13 +1392,12 @@
             <th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">Material</th>
             <th style="padding:12px;text-align:center;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">Warehouse</th>
             <th style="padding:12px;text-align:center;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">Beginning Qty</th>
-            <th style="padding:12px;text-align:center;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">Qty Out</th>
             <th style="padding:12px;text-align:center;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">Qty In</th>
+            <th style="padding:12px;text-align:center;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">Qty Out</th>
             <th style="padding:12px;text-align:center;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">Ending Qty</th>
           </tr>
         </thead>
         <tbody id="reportBody">
-          <tr><td colspan="7" style="text-align:center;padding:30px;color:#a0a0a0;">Select month and year to generate report</td></tr>
         </tbody>
       </table>
     </div>
