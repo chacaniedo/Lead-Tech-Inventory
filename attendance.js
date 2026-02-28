@@ -4,7 +4,14 @@ import {
     getDoc, doc, collection, getDocs, setDoc, updateDoc, addDoc, deleteDoc, 
     query, where, serverTimestamp, Timestamp, orderBy, limit 
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-import { onAuthStateChanged, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import {
+    onAuthStateChanged,
+    createUserWithEmailAndPassword,
+    updatePassword,
+    reauthenticateWithCredential,
+    EmailAuthProvider,
+    updateEmail
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
 // ===========================
 // UTILITY FUNCTIONS
@@ -279,6 +286,7 @@ async function submitAddEmployee(e) {
         const fullName = document.getElementById('employeeName').value;
         const firstName = fullName.trim().split(' ')[0]; // Get only first name
         const email = document.getElementById('employeeEmail').value;
+        const employeeTagging = document.getElementById('employeeTagging').value.trim();
         
         // Auto-generate password as "firstname123" (lowercase)
         const password = firstName.toLowerCase() + '123';
@@ -294,7 +302,7 @@ async function submitAddEmployee(e) {
         const employeeData = {
             uid: employeeAuthId,
             name: fullName,
-            tagging: document.getElementById('employeeTagging').value,
+            ...(employeeTagging ? { tagging: employeeTagging } : {}),
             email: email,
             contact: document.getElementById('employeeContact').value,
             department: document.getElementById('employeeDepartment').value,
@@ -831,6 +839,11 @@ const AttendanceRules = {
         AUTO_TIMEOUT: '18:00',
         TIMEZONE: 'Asia/Manila'
     },
+
+    LUNCH: {
+        START: '12:00',
+        END: '13:00'
+    },
     
     STATUS: {
         ON_TIME: 'On Time',
@@ -862,26 +875,232 @@ async function openAdminSettings() {
         const adminModal = document.getElementById('adminSettingsModal');
         if (!adminModal) return;
 
-        // Get current user info
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                // Load basic information
-                document.getElementById('adminFullName').value = user.displayName || 'Admin User';
-                document.getElementById('adminEmail').value = user.email || '';
-                document.getElementById('adminRole').value = 'Admin';
-                document.getElementById('adminDepartment').value = 'Headquarters';
-                document.getElementById('adminStatus').value = 'Active';
-                document.getElementById('adminLastLogin').value = new Date().toLocaleDateString();
+        const user = auth.currentUser;
+        if (!user) return;
 
-                // Load activity logs
-                await loadActivityLogs();
+        const profileInfo = await getAttendanceAdminProfileInfo(user.uid);
+        const profile = profileInfo.data || {};
 
-                // Show modal
-                adminModal.classList.add('active');
-            }
-        });
+        document.getElementById('adminFullName').value = profile.fullName || profile.name || user.displayName || 'Admin User';
+        document.getElementById('adminEmail').value = profile.email || user.email || '';
+        document.getElementById('adminRole').value = 'Admin';
+        document.getElementById('adminDepartment').value = profile.department || profile.site || 'Headquarters';
+        document.getElementById('adminStatus').value = (profile.status || 'Active').toString().toUpperCase();
+        document.getElementById('adminLastLogin').value = user.metadata?.lastSignInTime
+            ? new Date(user.metadata.lastSignInTime).toLocaleDateString()
+            : new Date().toLocaleDateString();
+
+        await loadActivityLogs();
+        adminModal.classList.add('active');
     } catch (error) {
         console.error('Error opening admin settings:', error);
+    }
+}
+
+async function getAttendanceAdminProfileInfo(userId) {
+    const profileCollections = ['admin_users', 'attendance_users', 'users'];
+
+    for (const collectionName of profileCollections) {
+        try {
+            const profileRef = doc(db, collectionName, userId);
+            const profileSnap = await getDoc(profileRef);
+            if (profileSnap.exists()) {
+                return { ref: profileRef, collection: collectionName, data: profileSnap.data() };
+            }
+        } catch (error) {
+            console.warn(`Error checking ${collectionName}:`, error);
+        }
+    }
+
+    return {
+        ref: doc(db, 'admin_users', userId),
+        collection: 'admin_users',
+        data: {}
+    };
+}
+
+async function populateEditDepartmentOptions(selectedDepartment = '') {
+    const departmentSelect = document.getElementById('editDepartment');
+    if (!departmentSelect) return;
+
+    departmentSelect.innerHTML = '<option value="">Select Department/Site</option>';
+
+    try {
+        const sitesSnap = await getDocs(collection(db, 'sites'));
+        const siteNames = [];
+
+        sitesSnap.forEach((siteDoc) => {
+            const siteData = siteDoc.data();
+            const siteName = (siteData.siteName || siteData.name || '').trim();
+            if (siteName) siteNames.push(siteName);
+        });
+
+        const uniqueSiteNames = Array.from(new Set(siteNames)).sort((a, b) => a.localeCompare(b));
+
+        uniqueSiteNames.forEach((siteName) => {
+            const option = document.createElement('option');
+            option.value = siteName;
+            option.textContent = siteName;
+            departmentSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.warn('Unable to load department/site options:', error);
+    }
+
+    if (selectedDepartment) {
+        const hasOption = Array.from(departmentSelect.options).some((opt) => opt.value === selectedDepartment);
+        if (!hasOption) {
+            const fallbackOption = document.createElement('option');
+            fallbackOption.value = selectedDepartment;
+            fallbackOption.textContent = selectedDepartment;
+            departmentSelect.appendChild(fallbackOption);
+        }
+        departmentSelect.value = selectedDepartment;
+    }
+}
+
+async function openEditAttendanceAdminProfileModal() {
+    const editProfileModal = document.getElementById('editProfileModal');
+    if (!editProfileModal) return;
+
+    const user = auth.currentUser;
+    if (!user) {
+        await showMessage('Error', 'No authenticated admin user found. Please login again.');
+        return;
+    }
+
+    const profileInfo = await getAttendanceAdminProfileInfo(user.uid);
+    const profile = profileInfo.data || {};
+
+    const currentName = profile.fullName || profile.name || user.displayName || '';
+    const currentEmail = profile.email || user.email || '';
+    const currentDepartment = profile.department || profile.site || 'Headquarters';
+
+    document.getElementById('editFullName').value = currentName;
+    document.getElementById('editEmail').value = currentEmail;
+    await populateEditDepartmentOptions(currentDepartment);
+
+    editProfileModal.classList.add('active');
+}
+
+async function submitAttendanceAdminProfileUpdate(e) {
+    e.preventDefault();
+
+    const user = auth.currentUser;
+    if (!user) {
+        await showMessage('Error', 'No authenticated admin user found. Please login again.');
+        return;
+    }
+
+    const fullName = (document.getElementById('editFullName')?.value || '').trim();
+    const email = (document.getElementById('editEmail')?.value || '').trim();
+    const department = (document.getElementById('editDepartment')?.value || '').trim();
+
+    if (!fullName || !email || !department) {
+        await showMessage('Validation Error', 'Please complete all profile fields.');
+        return;
+    }
+
+    try {
+        const profileInfo = await getAttendanceAdminProfileInfo(user.uid);
+        await setDoc(profileInfo.ref, {
+            fullName,
+            name: fullName,
+            email,
+            department,
+            site: department,
+            updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        let emailUpdateWarning = '';
+        if (user.email && user.email !== email) {
+            try {
+                await updateEmail(user, email);
+            } catch (emailError) {
+                console.warn('Unable to update auth email:', emailError);
+                emailUpdateWarning = ' Profile saved, but Auth email was not updated (please re-login and try again).';
+            }
+        }
+
+        const adminFullName = document.getElementById('adminFullName');
+        const adminEmail = document.getElementById('adminEmail');
+        const adminDepartment = document.getElementById('adminDepartment');
+        if (adminFullName) adminFullName.value = fullName;
+        if (adminEmail) adminEmail.value = email;
+        if (adminDepartment) adminDepartment.value = department;
+
+        document.getElementById('editProfileModal')?.classList.remove('active');
+        logActivity('Profile Updated', `Attendance admin profile updated for ${email}`);
+        await showMessage('Success', `Profile updated successfully.${emailUpdateWarning}`);
+    } catch (error) {
+        console.error('Error updating attendance admin profile:', error);
+        logActivity('Profile Updated', `Failed: ${error.message}`, 'failed');
+        await showMessage('Error', 'Failed to update profile: ' + error.message);
+    }
+}
+
+async function submitAttendanceAdminPasswordChange(e) {
+    e.preventDefault();
+
+    const user = auth.currentUser;
+    if (!user || !user.email) {
+        await showMessage('Error', 'No authenticated admin account found. Please login again.');
+        return;
+    }
+
+    const currentPassword = (document.getElementById('currentPassword')?.value || '').trim();
+    const newPassword = (document.getElementById('newPassword')?.value || '').trim();
+    const confirmPassword = (document.getElementById('confirmPassword')?.value || '').trim();
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+        await showMessage('Validation Error', 'Please fill in all password fields.');
+        return;
+    }
+
+    if (newPassword !== confirmPassword) {
+        await showMessage('Validation Error', 'New password and confirm password do not match.');
+        return;
+    }
+
+    if (newPassword.length < 6) {
+        await showMessage('Validation Error', 'New password must be at least 6 characters long.');
+        return;
+    }
+
+    if (newPassword === currentPassword) {
+        await showMessage('Validation Error', 'New password must be different from current password.');
+        return;
+    }
+
+    try {
+        const credential = EmailAuthProvider.credential(user.email, currentPassword);
+        await reauthenticateWithCredential(user, credential);
+        await updatePassword(user, newPassword);
+
+        const profileInfo = await getAttendanceAdminProfileInfo(user.uid);
+        await setDoc(profileInfo.ref, {
+            passwordUpdatedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        document.getElementById('changePasswordForm')?.reset();
+        document.getElementById('changePasswordModal')?.classList.remove('active');
+        logActivity('Password Changed', 'Attendance admin password updated successfully');
+        await showMessage('Success', 'Password changed successfully.');
+    } catch (error) {
+        console.error('Error changing attendance admin password:', error);
+
+        let errorMessage = 'Failed to change password: ' + error.message;
+        if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+            errorMessage = 'Current password is incorrect. Please try again.';
+        } else if (error.code === 'auth/weak-password') {
+            errorMessage = 'New password is too weak. Please choose a stronger password.';
+        } else if (error.code === 'auth/requires-recent-login') {
+            errorMessage = 'Session expired. Please logout and login again before changing password.';
+        }
+
+        logActivity('Password Changed', `Failed: ${error.code || error.message}`, 'failed');
+        await showMessage('Error', errorMessage);
     }
 }
 
@@ -961,6 +1180,12 @@ function parseTimeToMinutes(timeStr) {
     return 0;
 }
 
+function calculateOverlappingMinutes(rangeStart, rangeEnd, windowStart, windowEnd) {
+    const overlapStart = Math.max(rangeStart, windowStart);
+    const overlapEnd = Math.min(rangeEnd, windowEnd);
+    return Math.max(overlapEnd - overlapStart, 0);
+}
+
 function minutesToTimeString(minutes) {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
@@ -1021,7 +1246,7 @@ function checkAutoTimeout(clockInDate) {
     };
 }
 
-function calculateHoursWorked(clockInTime, clockOutTime) {
+function calculateHoursWorked(clockInTime, clockOutTime, lunchOutTime = null, lunchInTime = null) {
     try {
         const clockInMinutes = parseTimeToMinutes(clockInTime);
         const clockOutMinutes = parseTimeToMinutes(clockOutTime);
@@ -1030,6 +1255,20 @@ function calculateHoursWorked(clockInTime, clockOutTime) {
         
         let diffMinutes = clockOutMinutes - clockInMinutes;
         if (diffMinutes < 0) diffMinutes += 24 * 60;
+
+        const lunchStart = parseTimeToMinutes(AttendanceRules.LUNCH.START);
+        const lunchEnd = parseTimeToMinutes(AttendanceRules.LUNCH.END);
+        let lunchDeduction = calculateOverlappingMinutes(clockInMinutes, clockOutMinutes, lunchStart, lunchEnd);
+
+        if (lunchOutTime && lunchInTime) {
+            const lunchOutMinutes = parseTimeToMinutes(lunchOutTime);
+            const lunchInMinutes = parseTimeToMinutes(lunchInTime);
+            if (lunchOutMinutes > 0 && lunchInMinutes > 0 && lunchInMinutes >= lunchOutMinutes) {
+                lunchDeduction = calculateOverlappingMinutes(lunchOutMinutes, lunchInMinutes, lunchStart, lunchEnd);
+            }
+        }
+
+        diffMinutes = Math.max(diffMinutes - Math.min(lunchDeduction, diffMinutes), 0);
         
         const hours = Math.floor(diffMinutes / 60);
         const minutes = diffMinutes % 60;
@@ -1038,6 +1277,7 @@ function calculateHoursWorked(clockInTime, clockOutTime) {
             hours: hours,
             minutes: minutes,
             totalMinutes: diffMinutes,
+            lunchDeduction,
             formatted: `${hours}h ${minutes}m`
         };
     } catch (error) {
@@ -1083,7 +1323,7 @@ function getAttendanceSummary(record) {
     }
 
     if (record.clockIn && record.clockOut) {
-        summary.hoursWorked = calculateHoursWorked(record.clockIn, record.clockOut);
+        summary.hoursWorked = calculateHoursWorked(record.clockIn, record.clockOut, record.lunchOut, record.lunchIn);
     }
 
     return summary;
@@ -1167,7 +1407,7 @@ async function loadAllAttendanceRecords() {
         tbody.innerHTML = '';
         
         if (snapshot.empty) {
-            tbody.innerHTML = '<tr class="no-data"><td colspan="8" style="text-align:center;">No attendance records found</td></tr>';
+            tbody.innerHTML = '<tr class="no-data"><td colspan="10" style="text-align:center;">No attendance records found</td></tr>';
             return;
         }
         
@@ -1195,12 +1435,19 @@ async function loadAllAttendanceRecords() {
             }
             photoHTML += '</div>';
             
+            const lunchOutDisplay = formatTimeToAMPM(record.lunchOut) || '-';
+            const lunchInDisplay = record.lunchIn
+                ? `${formatTimeToAMPM(record.lunchIn)}${record.lunchLateReturn ? ' (Late)' : ''}`
+                : '-';
+
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td>${employeeName}</td>
                 <td>${record.date || '-'}</td>
                 <td style="text-align:center;">${formatTimeToAMPM(record.clockIn) || '-'}</td>
                 <td style="text-align:center;">${formatTimeToAMPM(record.clockOut) || '-'}</td>
+                <td style="text-align:center;">${lunchOutDisplay}</td>
+                <td style="text-align:center;">${lunchInDisplay}</td>
                 <td style="text-align:center;">${summary.hoursWorked ? summary.hoursWorked.formatted : '-'}</td>
                 <td style="text-align:center;">${photoHTML}</td>
                 <td style="text-align:center;"><span class="status-badge ${summary.status.toLowerCase().replace(/\s+/g, '-')}">${summary.status}</span></td>
@@ -1215,7 +1462,7 @@ async function loadAllAttendanceRecords() {
         rows.forEach(row => tbody.appendChild(row));
     } catch (error) {
         console.error('Error loading attendance records:', error);
-        document.getElementById('attendanceTableBody').innerHTML = '<tr class="no-data"><td colspan="8">Error loading records</td></tr>';
+        document.getElementById('attendanceTableBody').innerHTML = '<tr class="no-data"><td colspan="10">Error loading records</td></tr>';
     }
 }
 
@@ -1256,7 +1503,7 @@ async function filterAttendanceRecords() {
         }
         
         if (filteredRecords.length === 0) {
-            tbody.innerHTML = '<tr class="no-data"><td colspan="8" style="text-align:center;">No records match your filter</td></tr>';
+            tbody.innerHTML = '<tr class="no-data"><td colspan="10" style="text-align:center;">No records match your filter</td></tr>';
             return;
         }
         
@@ -1276,12 +1523,19 @@ async function filterAttendanceRecords() {
             }
             photoHTML += '</div>';
             
+            const lunchOutDisplay = formatTimeToAMPM(record.lunchOut) || '-';
+            const lunchInDisplay = record.lunchIn
+                ? `${formatTimeToAMPM(record.lunchIn)}${record.lunchLateReturn ? ' (Late)' : ''}`
+                : '-';
+
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td>${employeeName}</td>
                 <td>${record.date || '-'}</td>
                 <td style="text-align:center;">${formatTimeToAMPM(record.clockIn) || '-'}</td>
                 <td style="text-align:center;">${formatTimeToAMPM(record.clockOut) || '-'}</td>
+                <td style="text-align:center;">${lunchOutDisplay}</td>
+                <td style="text-align:center;">${lunchInDisplay}</td>
                 <td style="text-align:center;">${summary.hoursWorked ? summary.hoursWorked.formatted : '-'}</td>
                 <td style="text-align:center;">${photoHTML}</td>
                 <td style="text-align:center;"><span class="status-badge ${summary.status.toLowerCase().replace(/\s+/g, '-')}">${summary.status}</span></td>
@@ -1345,7 +1599,7 @@ async function openEditAttendanceModal(attendanceId, userId) {
         document.getElementById('editRemarks').value = record.remarks || '';
         
         if (record.clockIn && record.clockOut) {
-            const hoursWorked = calculateHoursWorked(record.clockIn, record.clockOut);
+            const hoursWorked = calculateHoursWorked(record.clockIn, record.clockOut, record.lunchOut, record.lunchIn);
             document.getElementById('editHoursWorked').value = hoursWorked ? hoursWorked.formatted : '-';
         } else {
             document.getElementById('editHoursWorked').value = '-';
@@ -1395,8 +1649,21 @@ async function saveAttendanceAdjustment(attendanceId, userId, adjustedData) {
 // MANUAL ATTENDANCE FUNCTIONS
 // ===========================
 
-async function loadActiveUsersForManualAttendance() {
+async function loadActiveUsersForManualAttendance(dateStr) {
     try {
+        const targetDate = dateStr || new Date().toISOString().split('T')[0];
+        const attendanceRef = collection(db, 'attendance');
+        const existingSnap = await getDocs(query(attendanceRef, where('date', '==', targetDate)));
+        const alreadyAttended = new Set();
+
+        existingSnap.forEach((doc) => {
+            const record = doc.data();
+            const recordUserId = record.userId || record.employeeId;
+            if (recordUserId) {
+                alreadyAttended.add(recordUserId);
+            }
+        });
+
         const usersMap = {};
         
         // Fetch from employees collection
@@ -1404,7 +1671,7 @@ async function loadActiveUsersForManualAttendance() {
         const employeesSnapshot = await getDocs(employeesRef);
         employeesSnapshot.forEach((doc) => {
             const emp = doc.data();
-            if (emp.status !== 'inactive') {
+            if (emp.status !== 'inactive' && !alreadyAttended.has(doc.id)) {
                 usersMap[doc.id] = {
                     name: emp.name,
                     email: emp.email,
@@ -1421,7 +1688,7 @@ async function loadActiveUsersForManualAttendance() {
         const snapshot = await getDocs(q);
         
         snapshot.forEach((doc) => {
-            if (!usersMap[doc.id]) {  // Only add if not already in employees
+            if (!usersMap[doc.id] && !alreadyAttended.has(doc.id)) {  // Only add if not already in employees
                 const user = doc.data();
                 usersMap[doc.id] = {
                     name: user.fullName || user.email,
@@ -1446,6 +1713,14 @@ async function loadActiveUsersForManualAttendance() {
             option.dataset.tagging = user.tagging || '';
             select.appendChild(option);
         });
+
+        if (select.options.length === 1) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'No available employees for this date';
+            option.disabled = true;
+            select.appendChild(option);
+        }
     } catch (error) {
         console.error('Error loading active users:', error);
     }
@@ -1453,8 +1728,9 @@ async function loadActiveUsersForManualAttendance() {
 
 async function showManualAttendanceModal() {
     try {
-        await loadActiveUsersForManualAttendance();
-        document.getElementById('manualAttendanceDate').valueAsDate = new Date();
+        const dateInput = document.getElementById('manualAttendanceDate');
+        dateInput.value = new Date().toISOString().split('T')[0];
+        await loadActiveUsersForManualAttendance(dateInput.value);
         document.getElementById('addManualAttendanceModal').classList.add('active');
     } catch (error) {
         console.error('Error showing manual attendance modal:', error);
@@ -1670,6 +1946,16 @@ async function loadDashboardData() {
                     photoHTML += '-';
                 }
                 photoHTML += '</div>';
+
+                const lunchOutLabel = record.lunchOut ? formatTimeToAMPM(record.lunchOut) : 'Not recorded';
+                const lunchInLabel = record.lunchIn ? formatTimeToAMPM(record.lunchIn) : 'Not recorded';
+                const lunchBadgeText = record.lunchIn
+                    ? (record.lunchLateReturn ? 'L!' : 'L✓')
+                    : (record.lunchOut ? 'L…' : '');
+                const lunchBadgeTitle = `Lunch Out: ${lunchOutLabel}\nLunch In: ${lunchInLabel}`;
+                const lunchBadge = lunchBadgeText
+                    ? `<span style="margin-left:6px; padding:2px 6px; font-size:10px; border-radius:8px; background:#1a3a5c; color:#b0c4de; border:1px solid #3a6aaa;" title="${lunchBadgeTitle.replace(/"/g, '&quot;')}">${lunchBadgeText}</span>`
+                    : '';
                 
                 const row = document.createElement('tr');
                 row.innerHTML = `
@@ -1680,7 +1966,7 @@ async function loadDashboardData() {
                     <td>${formatTimeToAMPM(record.clockOut) || 'N/A'}</td>
                     <td>${locationHTML}</td>
                     <td>${photoHTML}</td>
-                    <td><span class="status-badge ${summary.status.toLowerCase().replace(/\s+/g, '-')}">${summary.status}</span></td>
+                    <td><span class="status-badge ${summary.status.toLowerCase().replace(/\s+/g, '-')}">${summary.status}</span>${lunchBadge}</td>
                 `;
                 tbody.appendChild(row);
             }
@@ -2259,7 +2545,7 @@ async function generateDataReport() {
             // Calculate hours worked - handle both calculated and stored hours
             if (record.clockIn && record.clockOut) {
                 try {
-                    const hoursData = calculateHoursWorked(record.clockIn, record.clockOut);
+                    const hoursData = calculateHoursWorked(record.clockIn, record.clockOut, record.lunchOut, record.lunchIn);
                     if (hoursData && hoursData.totalMinutes) {
                         totalHours += hoursData.totalMinutes / 60;
                     }
@@ -2338,6 +2624,18 @@ async function generateDataReport() {
                     locationColor = '#1dd1a1';
                 }
                 
+                const computedHours = (record.clockIn && record.clockOut)
+                    ? calculateHoursWorked(record.clockIn, record.clockOut, record.lunchOut, record.lunchIn)
+                    : null;
+
+                const hoursDisplay = computedHours
+                    ? computedHours.formatted
+                    : (record.hoursWorked
+                        ? (typeof record.hoursWorked === 'number'
+                            ? (record.hoursWorked / 60).toFixed(1) + 'h'
+                            : record.hoursWorked)
+                        : 'N/A');
+
                 const row = document.createElement('tr');
                 row.style.borderBottom = '1px solid #1a3a5c';
                 row.innerHTML = `
@@ -2348,7 +2646,7 @@ async function generateDataReport() {
                     <td style="padding: 12px; color: #e0e0e0;">${date}</td>
                     <td style="padding: 12px; color: #e0e0e0;">${record.clockIn ? formatTimeToAMPM(record.clockIn) : 'N/A'}</td>
                     <td style="padding: 12px; color: #e0e0e0;">${record.clockOut ? formatTimeToAMPM(record.clockOut) : 'N/A'}</td>
-                    <td style="padding: 12px; color: #e0e0e0;">${record.hoursWorked ? (typeof record.hoursWorked === 'number' ? (record.hoursWorked / 60).toFixed(1) + 'h' : record.hoursWorked) : 'N/A'}</td>
+                    <td style="padding: 12px; color: #e0e0e0;">${hoursDisplay}</td>
                     <td style="padding: 12px; color: ${locationColor}; font-size: 11px; font-weight: 600;">${locationDisplay}</td>
                     <td style="padding: 12px;">
                         <span class="status-badge" style="background-color: ${statusColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">
@@ -2483,6 +2781,16 @@ function exportToCSV() {
 
 // PDF Template Generator - Grid-based layout with days as columns
 function buildAttendancePDFTemplate(employeeRecords, globalUniqueDays, overallFirstDate, overallLastDate) {
+    const formatTimeNoPeriod = (timeValue) => {
+        if (!timeValue || timeValue === '-') return '-';
+        const formatted = formatTimeToAMPM(timeValue);
+        if (!formatted || formatted === 'N/A') return '-';
+        const match = formatted.match(/^(.*?)(?:\s*)(AM|PM)$/i);
+        if (!match) return formatted;
+        const baseTime = match[1].trim();
+        const meridiem = match[2].toLowerCase();
+        return `<span style="white-space: nowrap;">${baseTime}<span style="font-size: 6px; font-weight: 600; letter-spacing: 0.2px;"> ${meridiem}</span></span>`;
+    };
     const startMonth = String(overallFirstDate.getMonth() + 1).padStart(2, '0');
     const startDay = String(overallFirstDate.getDate()).padStart(2, '0');
     const endMonth = String(overallLastDate.getMonth() + 1).padStart(2, '0');
@@ -2505,7 +2813,7 @@ function buildAttendancePDFTemplate(employeeRecords, globalUniqueDays, overallFi
         .map(() => `<col style="width:${colWidth}%;">`)
         .join('');
 
-    const usersPerPage = 9;
+    const usersPerPage = 10;
     const employeeEntries = Object.keys(employeeRecords)
         .map((userId) => {
             const employee = employeeRecords[userId];
@@ -2526,16 +2834,16 @@ function buildAttendancePDFTemplate(employeeRecords, globalUniqueDays, overallFi
         const isFirstPage = start === 0;
 
         htmlContent += `
-            <div style="margin-bottom: 10px; ${!isLastPage ? 'page-break-after: always;' : ''}">
-                <table style="width: 100%; border-collapse: collapse; font-size: 8px; border: 1px solid #999; table-layout: fixed;">
+            <div style="margin-bottom: 2px; ${!isLastPage ? 'page-break-after: always;' : ''}">
+                <table style="width: 100%; border-collapse: collapse; font-size: 7px; border: 1px solid #999; table-layout: fixed;">
                     <colgroup>
                         ${colGroupHtml}
                     </colgroup>
                     ${isFirstPage ? `
                     <tr>
-                        <td colspan="${dayColumnCount}" style="padding: 3px 3px; border: 1px solid #999; font-weight: bold; background-color: #d3d3d3; text-align: center; word-wrap: break-word; font-size: 8px; line-height: 1.3;">
-                            <div style="font-size: 9px; letter-spacing: 0.6px;">ATTENDANCE REPORT</div>
-                            <div style="font-size: 8px; margin-top: 1px;">${overallDateRangeText}</div>
+                        <td colspan="${dayColumnCount}" style="padding: 2px 2px; border: 1px solid #999; font-weight: bold; background-color: #d3d3d3; text-align: center; word-wrap: break-word; font-size: 7px; line-height: 1.15;">
+                            <div style="font-size: 8px; letter-spacing: 0.4px;">ATTENDANCE REPORT</div>
+                            <div style="font-size: 7px; margin-top: 0;">${overallDateRangeText}</div>
                         </td>
                     </tr>
                     ` : ''}
@@ -2545,17 +2853,18 @@ function buildAttendancePDFTemplate(employeeRecords, globalUniqueDays, overallFi
             const records = employee.records;
 
             htmlContent += `
+                    <tbody style="page-break-inside: avoid; break-inside: avoid;">
                     <tr style="background-color: #ADD8E6; border: 1px solid #999; page-break-inside: avoid;">
-                        <td colspan="${idColspan}" style="padding: 2px 2px; border: 1px solid #999; border-right: none; font-weight: bold; width: ${colWidth}%; text-align: left; word-wrap: break-word; font-size: 8px;">
+                        <td colspan="${idColspan}" style="padding: 1px 1px; border: 1px solid #999; border-right: none; font-weight: bold; width: ${colWidth}%; text-align: left; word-wrap: break-word; font-size: 7px; line-height: 1.05;">
                             <strong>ID: ${employee.employeeId}</strong>
                         </td>
-                        <td colspan="${leftSpacerColspan}" style="padding: 2px 2px; border-top: 1px solid #999; border-bottom: 1px solid #999; font-weight: bold; text-align: center; word-wrap: break-word; font-size: 8px;">
+                        <td colspan="${leftSpacerColspan}" style="padding: 1px 1px; border-top: 1px solid #999; border-bottom: 1px solid #999; font-weight: bold; text-align: center; word-wrap: break-word; font-size: 7px; line-height: 1.05;">
                             <strong>&nbsp;</strong>
                         </td>
-                        <td colspan="${nameColspan}" style="padding: 2px 2px; border-top: 1px solid #999; border-bottom: 1px solid #999; font-weight: bold; text-align: left; word-wrap: break-word; font-size: 8px;">
+                        <td colspan="${nameColspan}" style="padding: 1px 1px; border-top: 1px solid #999; border-bottom: 1px solid #999; font-weight: bold; text-align: left; word-wrap: break-word; font-size: 7px; line-height: 1.05;">
                             <strong>NAME: ${employee.fullName.toUpperCase()}</strong>
                         </td>
-                        <td colspan="${deptColspan}" style="padding: 2px 2px; border: 1px solid #999; border-left: none; font-weight: bold; text-align: left; word-wrap: break-word; font-size: 8px;">
+                        <td colspan="${deptColspan}" style="padding: 1px 1px; border: 1px solid #999; border-left: none; font-weight: bold; text-align: left; word-wrap: break-word; font-size: 7px; line-height: 1.05;">
                             <strong>DEPT.: ${employee.department.toUpperCase()}</strong>
                         </td>
                     </tr>
@@ -2565,12 +2874,19 @@ function buildAttendancePDFTemplate(employeeRecords, globalUniqueDays, overallFi
             // Generate all day columns
             for (let day = 1; day <= dayColumnCount; day++) {
                 const record = records.find(r => new Date(r.date).getDate() === day);
-                const clockInTime = record?.clockIn ? formatTimeToAMPM(record.clockIn) : '-';
-                const clockOutTime = record?.clockOut ? formatTimeToAMPM(record.clockOut) : '-';
+                const clockInTime = record?.clockIn ? formatTimeNoPeriod(record.clockIn) : '-';
+                const lunchOutTime = record?.lunchOut ? formatTimeNoPeriod(record.lunchOut) : '-';
+                const lunchInTime = record?.lunchIn ? formatTimeNoPeriod(record.lunchIn) : '-';
+                const clockOutTime = record?.clockOut ? formatTimeNoPeriod(record.clockOut) : '-';
+
+                const timeInLine = `${clockInTime}`;
+                const lunchOutLine = `${lunchOutTime}`;
+                const lunchInLine = `${lunchInTime}`;
+                const timeOutLine = `${clockOutTime}`;
 
                 htmlContent += `
-                    <td style="padding: 2px 1px; border: 1px solid #999; text-align: center; font-size: 8px; width: ${colWidth}%; word-wrap: break-word; line-height: 1.3;">
-                        ${clockInTime}<br/>${clockOutTime}
+                    <td style="padding: 1px 1px; border: 1px solid #999; text-align: center; font-size: 7px; width: ${colWidth}%; word-wrap: break-word; line-height: 1.05;">
+                        ${timeInLine}<br/>${lunchOutLine}<br/>${lunchInLine}<br/>${timeOutLine}
                     </td>
                 `;
             }
@@ -2580,13 +2896,13 @@ function buildAttendancePDFTemplate(employeeRecords, globalUniqueDays, overallFi
             // Day row for all day columns
             for (let day = 1; day <= dayColumnCount; day++) {
                 htmlContent += `
-                    <td style="padding: 2px 1px; border: 1px solid #999; font-weight: bold; text-align: center; width: ${colWidth}%; word-wrap: break-word; font-size: 8px; line-height: 1.2;">
+                    <td style="padding: 1px 1px; border: 1px solid #999; font-weight: bold; text-align: center; width: ${colWidth}%; word-wrap: break-word; font-size: 7px; line-height: 1.05;">
                         ${day}
                     </td>
                 `;
             }
 
-            htmlContent += `</tr>`;
+            htmlContent += `</tr></tbody>`;
         });
 
         htmlContent += `
@@ -2761,7 +3077,26 @@ async function loadAnnouncements() {
         
         snapshot.forEach((doc) => {
             const announcement = doc.data();
-            const date = new Date(announcement.createdAt?.toDate?.() || announcement.createdAt).toLocaleDateString();
+            const createdAtValue = announcement.createdAt?.toDate?.() || announcement.createdAt;
+            const updatedAtValue = announcement.updatedAt?.toDate?.() || announcement.updatedAt;
+
+            const createdAtDate = createdAtValue ? new Date(createdAtValue) : null;
+            const updatedAtDate = updatedAtValue ? new Date(updatedAtValue) : null;
+
+            const hasValidCreatedAt = createdAtDate && !isNaN(createdAtDate.getTime());
+            const hasValidUpdatedAt = updatedAtDate && !isNaN(updatedAtDate.getTime());
+
+            const date = hasValidCreatedAt ? createdAtDate.toLocaleDateString() : 'No date';
+            const updatedAtText = hasValidUpdatedAt
+                ? updatedAtDate.toLocaleDateString(undefined, {
+                    year: 'numeric',
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit'
+                })
+                : '';
+            const isEdited = hasValidUpdatedAt;
             const priority = announcement.priority || 'normal';
             const category = announcement.category || 'general';
             
@@ -2770,7 +3105,10 @@ async function loadAnnouncements() {
             item.innerHTML = `
                 <div class="announcement-header">
                     <div>
-                        <h4 class="announcement-title">${announcement.title || 'Untitled'}</h4>
+                        <div class="announcement-title-row">
+                            <h4 class="announcement-title">${announcement.title || 'Untitled'}</h4>
+                            ${isEdited ? '<span class="announcement-edited-badge">EDITED</span>' : ''}
+                        </div>
                     </div>
                     <div class="announcement-actions">
                         <button class="announcement-edit-btn" onclick="editAnnouncement('${doc.id}')" title="Edit">
@@ -2783,7 +3121,10 @@ async function loadAnnouncements() {
                 </div>
                 <p class="announcement-text">${announcement.message || ''}</p>
                 <div class="announcement-meta">
-                    <span class="announcement-date">${date}</span>
+                    <span class="announcement-date">
+                        ${date}
+                        ${updatedAtText ? `<span class="announcement-updated">Updated: ${updatedAtText}</span>` : ''}
+                    </span>
                     <div>
                         <span class="announcement-category ${category}">${category.toUpperCase()}</span>
                         <span class="announcement-priority ${priority}">${priority.toUpperCase()}</span>
@@ -2961,6 +3302,12 @@ async function displayCities() {
         
         if (!citiesList) return;
         
+        // Update count in header
+        const citiesCount = document.getElementById('citiesCount');
+        if (citiesCount) {
+            citiesCount.textContent = `(${snapshot.size})`;
+        }
+        
         citiesList.innerHTML = '';
         
         if (snapshot.empty) {
@@ -3074,6 +3421,12 @@ async function displaySiteNames() {
         const siteNamesList = document.getElementById('siteNamesList');
         
         if (!siteNamesList) return;
+        
+        // Update count in header
+        const siteNamesCount = document.getElementById('siteNamesCount');
+        if (siteNamesCount) {
+            siteNamesCount.textContent = `(${snapshot.size})`;
+        }
         
         siteNamesList.innerHTML = '';
         
@@ -3960,14 +4313,37 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
     
     // Edit Profile button
-    document.getElementById('editProfileBtn')?.addEventListener('click', function() {
-        showMessage('Info', 'Profile editing will be implemented soon');
+    document.getElementById('editProfileBtn')?.addEventListener('click', async function() {
+        await openEditAttendanceAdminProfileModal();
     });
     
     // Change Password button
     document.getElementById('changePasswordBtn')?.addEventListener('click', function() {
-        showMessage('Info', 'Password change feature will be implemented soon');
+        document.getElementById('changePasswordForm')?.reset();
+        document.getElementById('changePasswordModal')?.classList.add('active');
     });
+
+    // Edit profile modal controls
+    document.getElementById('closeEditProfileModal')?.addEventListener('click', function() {
+        document.getElementById('editProfileModal')?.classList.remove('active');
+    });
+
+    document.getElementById('cancelEditProfileBtn')?.addEventListener('click', function() {
+        document.getElementById('editProfileModal')?.classList.remove('active');
+    });
+
+    document.getElementById('editProfileForm')?.addEventListener('submit', submitAttendanceAdminProfileUpdate);
+
+    // Change password modal controls
+    document.getElementById('closeChangePasswordModal')?.addEventListener('click', function() {
+        document.getElementById('changePasswordModal')?.classList.remove('active');
+    });
+
+    document.getElementById('cancelChangePasswordBtn')?.addEventListener('click', function() {
+        document.getElementById('changePasswordModal')?.classList.remove('active');
+    });
+
+    document.getElementById('changePasswordForm')?.addEventListener('submit', submitAttendanceAdminPasswordChange);
     
     // Modal controls
     document.getElementById('closeAttendanceSettingsModal')?.addEventListener('click', function() {
@@ -3984,6 +4360,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Manual attendance form
     document.getElementById('manualAttendanceEmployee')?.addEventListener('change', updateEmployeeDetailsDisplay);
+    document.getElementById('manualAttendanceDate')?.addEventListener('change', async function() {
+        await loadActiveUsersForManualAttendance(this.value);
+        updateEmployeeDetailsDisplay();
+    });
     
     document.getElementById('addManualAttendanceForm')?.addEventListener('submit', submitManualAttendance);
     
@@ -4022,6 +4402,20 @@ document.addEventListener('DOMContentLoaded', async function() {
         const locationModal = document.getElementById('viewAttendanceLocationModal');
         if (event.target === locationModal) {
             closeAttendanceLocationModal();
+        }
+
+        const adminSettingsModal = document.getElementById('adminSettingsModal');
+        const editProfileModal = document.getElementById('editProfileModal');
+        const changePasswordModal = document.getElementById('changePasswordModal');
+
+        if (event.target === adminSettingsModal) {
+            adminSettingsModal.classList.remove('active');
+        }
+        if (event.target === editProfileModal) {
+            editProfileModal.classList.remove('active');
+        }
+        if (event.target === changePasswordModal) {
+            changePasswordModal.classList.remove('active');
         }
     });
     
@@ -4545,6 +4939,22 @@ document.addEventListener('DOMContentLoaded', async function() {
         const menuBtn = document.getElementById('menuBtn');
         const attendanceSidebar = document.getElementById('attendanceUserSidebar');
         const employeeSidebar = document.getElementById('employeeSidebar');
+
+        const syncSidebarForViewport = () => {
+            const isMobileView = window.innerWidth <= 768;
+
+            [attendanceSidebar, employeeSidebar].forEach((sidebar) => {
+                if (!sidebar) return;
+                if (isMobileView) {
+                    sidebar.classList.add('closed');
+                } else {
+                    sidebar.classList.remove('closed');
+                }
+            });
+        };
+
+        syncSidebarForViewport();
+        window.addEventListener('resize', syncSidebarForViewport);
         
         if (menuBtn) {
             menuBtn.addEventListener('click', function(e) {
@@ -4664,18 +5074,28 @@ async function editSite(siteId) {
             e.preventDefault();
             
             try {
-                const latitude = parseFloat(document.getElementById('siteLatitude').value);
-                const longitude = parseFloat(document.getElementById('siteLongitude').value);
-                const radius = parseInt(document.getElementById('siteRadius').value) || 100;
+                const latitudeVal = document.getElementById('siteLatitude').value?.trim();
+                const longitudeVal = document.getElementById('siteLongitude').value?.trim();
+                const radiusVal = document.getElementById('siteRadius').value?.trim();
                 
-                if (isNaN(latitude) || isNaN(longitude)) {
-                    await showMessage('Error', 'Please provide valid latitude and longitude coordinates');
-                    return;
-                }
+                // Only require geofencing if BOTH latitude and longitude are provided
+                const hasGeofencing = latitudeVal && longitudeVal;
                 
-                if (radius < 10 || radius > 1000) {
-                    await showMessage('Error', 'Radius must be between 10 and 1000 meters');
-                    return;
+                // If both latitude and longitude are provided, validate them
+                if (hasGeofencing) {
+                    const latitude = parseFloat(latitudeVal);
+                    const longitude = parseFloat(longitudeVal);
+                    const radius = parseInt(radiusVal) || 100;
+                    
+                    if (isNaN(latitude) || isNaN(longitude)) {
+                        await showMessage('Error', 'Please provide valid latitude and longitude coordinates for geofencing');
+                        return;
+                    }
+                    
+                    if (radius < 10 || radius > 1000) {
+                        await showMessage('Error', 'Radius must be between 10 and 1000 meters');
+                        return;
+                    }
                 }
                 
                 const updatedData = {
@@ -4684,13 +5104,20 @@ async function editSite(siteId) {
                     city: document.getElementById('siteCity').value,
                     manager: document.getElementById('siteManager').value,
                     status: document.getElementById('siteStatus').value,
-                    geofence: {
+                    updatedAt: new Date()
+                };
+                
+                // Only update geofencing if user provided latitude and longitude
+                if (hasGeofencing) {
+                    const latitude = parseFloat(latitudeVal);
+                    const longitude = parseFloat(longitudeVal);
+                    const radius = parseInt(radiusVal) || 100;
+                    updatedData.geofence = {
                         latitude: latitude,
                         longitude: longitude,
                         radius: radius
-                    },
-                    updatedAt: new Date()
-                };
+                    };
+                }
                 
                 await updateDoc(doc(db, 'sites', siteId), updatedData);
                 logActivity('Site Updated', `Updated site: ${updatedData.siteName}`);
