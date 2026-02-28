@@ -19,7 +19,11 @@ import {
   onSnapshot,
   deleteDoc,
   query,
-  where
+  where,
+  serverTimestamp,
+  checkUserPermission,
+  checkModuleAccess,
+  getPermissionErrorMessage,
 } from "./firebase.js";
 
 // ========================================
@@ -279,27 +283,17 @@ window.openLowStockModal = async function() {
       const statusClass = qty < minQty ? "status-low" : "status-warning";
       const statusText = qty < minQty ? "CRITICAL" : "LOW";
       
-      // Get project/warehouse name (and code) from ID
-      const warehouseId = item.warehouse || "-";
-      let warehouseName = "-";
-      let warehouseCode = "-";
-      if (warehouseId !== "-") {
-        const wh = allWarehouses.find(w => w.id === warehouseId);
-        if (wh) {
-          warehouseName = wh.name || "-";
-          warehouseCode = wh.code || "-";
-        } else {
-          warehouseName = warehouseId;
-        }
-      }
+      // Get project name and warehouse location from the material item itself
+      const projectName = item.warehouseName || "-";
+      const whLoc = item.whloc || "-";
       
       return `
         <tr>
           <td>${item.itemCode || "-"}</td>
           <td>${item.material || item.materialName || "-"}</td>
           <td>${item.specification || "-"}</td>
-          <td>${warehouseName}</td>
-          <td>${warehouseCode}</td>
+          <td>${projectName}</td>
+          <td>${whLoc}</td>
           <td style="font-weight:600;color:#ff6b6b;">${qty}</td>
           <td><span class="${statusClass}">${statusText}</span></td>
         </tr>
@@ -346,24 +340,39 @@ window.openNearExpireModal = async function() {
   } catch (err) {
     console.error("Error loading warehouses:", err);
   }
+
+  // Also load projects (materials can be stored in projects too)
+  try {
+    const projSnap = await getDocsFromServer(collection(db, "projects"));
+    allProjects = [];
+    projSnap.forEach(doc => {
+      allProjects.push({ id: doc.id, ...doc.data() });
+    });
+    console.log(`✅ Loaded ${allProjects.length} projects`);
+  } catch (err) {
+    console.error("Error loading projects:", err);
+  }
   
-  // Filter items that expire within 30 days (including expired) AND validate warehouse exists
-  const seenItems = new Set(); // Deduplicate items
+  // Filter items that expire within 30 days (including expired) AND validate warehouse/project exists
   const nearExpireItems = allMaterials.filter(item => {
     // Only include materials with quantity > 0 (actually in stock)
     const qty = parseInt(item.quantity || 0);
     if (qty === 0) return false;
     
-    // Must have all required fields for a valid material
-    if (!item.itemCode || !item.material || !item.warehouse) return false;
+    // Must have item code and material name
+    if (!item.itemCode || !item.material) return false;
+    
+    // Must have warehouse field (where the material is stored)
+    if (!item.warehouse) return false;
     
     // If no expiry date, skip this item
     if (!item.expiryDate) return false;
     
-    // Verify warehouse still exists (not deleted)
+    // Verify warehouse OR project still exists (not deleted) - but be lenient if warehouse is missing (might be valid)
     const warehouseExists = allWarehouses.some(w => w.id === item.warehouse);
-    if (!warehouseExists) {
-      console.warn(`⚠️ Material ${item.itemCode} has non-existent warehouse: ${item.warehouse}`);
+    const projectExists = allProjects.some(p => p.id === item.warehouse);
+    if (!warehouseExists && !projectExists) {
+      // Warehouse/Project doesn't exist - skip this item
       return false;
     }
     
@@ -377,16 +386,13 @@ window.openNearExpireModal = async function() {
       
       const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
       
-      // Check if expires within 30 days (original logic for compatibility)
-      const passesFilter = daysUntilExpiry <= 30;
-      
-      // Deduplicate: only keep first occurrence of itemCode + warehouse combo
-      const itemKey = `${item.itemCode}|${item.warehouse}`;
-      if (seenItems.has(itemKey)) return false;
-      if (passesFilter) seenItems.add(itemKey);
+      // Use 30% of shelf life as threshold (matching calculateMaterialStatus logic)
+      const nearExpiryThresholdDays = Math.ceil((item.agingDays || 90) * 0.30);
+      const passesFilter = daysUntilExpiry <= nearExpiryThresholdDays;
       
       if (passesFilter) {
-        console.log(`📦 Near-expire material: ${item.itemCode} (${item.material}) - ${daysUntilExpiry} days left`);
+        const shelfLifePercent = Math.round((daysUntilExpiry / (item.agingDays || 90)) * 100);
+        console.log(`📦 Near-expire material: ${item.itemCode} (${item.material}) - ${daysUntilExpiry} days left (${shelfLifePercent}% of shelf life) - Threshold: ${nearExpiryThresholdDays} days`);
       }
       
       return passesFilter;
@@ -400,7 +406,7 @@ window.openNearExpireModal = async function() {
     return dateA - dateB;
   });
 
-  console.log(`✅ Found ${nearExpireItems.length} items expiring within 30 days`);
+  console.log(`✅ Found ${nearExpireItems.length} items with less than 30% shelf life remaining`);
 
   const tableBody = document.getElementById("nearExpireTableBody");
   const emptyMsg = document.getElementById("nearExpireEmptyMsg");
@@ -451,6 +457,7 @@ window.openNearExpireModal = async function() {
         <tr data-project-id="${warehouseId}">
           <td>${item.itemCode || "-"}</td>
           <td>${item.material || item.materialName || "-"}</td>
+          <td>${item.specification || "-"}</td>
           <td>${expiryDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
           <td><span class="${daysClass}">${daysText}</span></td>
           <td>${projectName}</td>
@@ -501,6 +508,9 @@ window.openNearExpireModal = async function() {
       console.log('✅ Project filter dropdown populated with', uniqueProjects.size, 'projects');
     }
   }, 100);
+  
+  // Update the near-to-expire count cards
+  updateNearExpireCount();
   
   modal.style.display = "flex";
 };
@@ -818,6 +828,19 @@ async function getNextPONumber() {
   }
 }
 
+// Generate sequential DR number (DR001, DR002, etc.)
+async function getNextDRNumber() {
+  try {
+    const snap = await getDocs(collection(db, "deliveryReceipts"));
+    let count = snap.size + 1;
+    
+    return `DR${String(count).padStart(3, '0')}`;
+  } catch (err) {
+    console.error("Error getting DR number:", err);
+    return `DR001`;
+  }
+}
+
 function showAlert(message, type = "success") {
   const alert = document.createElement("div");
   alert.style.cssText = `
@@ -1073,7 +1096,7 @@ async function loadWarehouses() {
     renderWarehouseTable();
     updateWarehouseFilters();
     updateWarehouseDropdowns();
-    updateWarehouseChart();
+    updateProjectDistributionChart();
     populateReportWarehouses();
     return Promise.resolve();
   } catch (err) {
@@ -1089,7 +1112,14 @@ function populateReportWarehouses() {
   const currentValue = whSelect.value;
   whSelect.innerHTML = '<option value="">All Projects</option>';
   
-  allWarehouses.forEach(wh => {
+  // Sort warehouses alphabetically by name
+  const sortedWarehouses = [...allWarehouses].sort((a, b) => {
+    const nameA = a.name || "";
+    const nameB = b.name || "";
+    return nameA.localeCompare(nameB);
+  });
+  
+  sortedWarehouses.forEach(wh => {
     const option = document.createElement("option");
     option.value = wh.id || wh.name;
     option.textContent = wh.code ? `${wh.name} (${wh.code})` : wh.name;
@@ -1147,7 +1177,9 @@ function renderProjectsTable() {
     return;
   }
   
-  allProjects.forEach(project => {
+  const sortedProjects = getProjectManagementOrderedProjects();
+  
+  sortedProjects.forEach(project => {
     const tradesDisplay = Array.isArray(project.trades) ? project.trades.join(", ") : (project.trade || "N/A");
     warehouseBody.innerHTML += `
       <tr>
@@ -1169,12 +1201,26 @@ function renderProjectsTable() {
   });
 }
 
+function getProjectManagementOrderedProjects() {
+  return [...(allProjects || [])].sort((a, b) => {
+    const nameA = (a.name || "").toString();
+    const nameB = (b.name || "").toString();
+    return nameA.localeCompare(nameB);
+  });
+}
+
 function updateWarehouseFilters() {
   // IMPORTANT: Only update warehouse tabs in Stock Monitoring section, NOT Materials section
   const tabsContainer = document.querySelector("#stock-monitoring .warehouses-row .tabs");
   if (tabsContainer) {
     tabsContainer.innerHTML = '<button class="tab active" data-warehouse="all">All</button>';
-    allWarehouses.forEach(wh => {
+    // Sort warehouses alphabetically by name
+    const sortedWarehouses = [...allWarehouses].sort((a, b) => {
+      const nameA = a.name || "";
+      const nameB = b.name || "";
+      return nameA.localeCompare(nameB);
+    });
+    sortedWarehouses.forEach(wh => {
       // show project name and optionally code
       const label = wh.code ? `${wh.name} (${wh.code})` : wh.name;
       tabsContainer.innerHTML += `<button class="tab" data-warehouse="${wh.id}">${label}</button>`;
@@ -1188,7 +1234,13 @@ function updateWarehouseDropdowns() {
   if (matWarehouse) {
     const selectedValue = matWarehouse.value;
     matWarehouse.innerHTML = '<option value="">Select Project</option>';
-    allWarehouses.forEach(wh => {
+    // Sort warehouses alphabetically by name
+    const sortedWarehouses = [...allWarehouses].sort((a, b) => {
+      const nameA = a.name || "";
+      const nameB = b.name || "";
+      return nameA.localeCompare(nameB);
+    });
+    sortedWarehouses.forEach(wh => {
       const label = wh.code ? `${wh.name} (${wh.code})` : wh.name;
       matWarehouse.innerHTML += `<option value="${wh.id}">${label}</option>`;
     });
@@ -1675,8 +1727,9 @@ async function loadMaterials() {
       await initMaterialColumns2();
     }
     
-    // Load suppliers
+    // Load suppliers and projects
     await loadSuppliers();
+    await loadProjects();
     
     const snap = await getDocs(collection(db, "materials"));
     allMaterials = [];
@@ -1700,12 +1753,13 @@ async function loadMaterials() {
     }
     
     if (isMaterialsTab) {
-      renderMaterials2("all");
-      updateMaterialSummaries2();
+      await renderMaterials2("all");
+      await updateMaterialSummaries2();
     }
     
-    updateWarehouseChart();
+    updateProjectDistributionChart();
     updateWeeklyStockChart();
+    updateNearExpireCount();
     
     // Update today's stock data whenever materials are loaded
     // Load and initialize daily stock data
@@ -1781,19 +1835,78 @@ function updateMaterialSummaries(warehouse = "all") {
   document.getElementById("dashLowStock") && (document.getElementById("dashLowStock").textContent = low);
 }
 
+// Update Near to Expire count on dashboard and materials monitoring cards
+function updateNearExpireCount() {
+  try {
+    // Filter items that expire within 30% of shelf life remaining
+    const nearExpireItems = allMaterials.filter(item => {
+      // Only include materials with quantity > 0 (actually in stock)
+      const qty = parseInt(item.quantity || 0);
+      if (qty === 0) return false;
+      
+      // Must have item code and material name
+      if (!item.itemCode || !item.material) return false;
+      
+      // Must have warehouse field (where the material is stored)
+      if (!item.warehouse) return false;
+      
+      // If no expiry date, skip this item
+      if (!item.expiryDate) return false;
+      
+      // Verify warehouse OR project still exists (not deleted)
+      const warehouseExists = allWarehouses.some(w => w.id === item.warehouse);
+      const projectExists = allProjects.some(p => p.id === item.warehouse);
+      if (!warehouseExists && !projectExists) {
+        return false;
+      }
+      
+      try {
+        const expiryDate = new Date(item.expiryDate);
+        const today = new Date();
+        
+        // Set time to midnight for accurate day calculation
+        today.setHours(0, 0, 0, 0);
+        expiryDate.setHours(0, 0, 0, 0);
+        
+        const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
+        
+        // Use 30% of shelf life as threshold
+        const nearExpiryThresholdDays = Math.ceil((item.agingDays || 90) * 0.30);
+        return daysUntilExpiry <= nearExpiryThresholdDays;
+      } catch (e) {
+        return false;
+      }
+    }).length;
+    
+    // Update both dashboard and materials monitoring cards
+    document.getElementById("dashNearExpire") && (document.getElementById("dashNearExpire").textContent = nearExpireItems);
+    document.getElementById("matNearExpire") && (document.getElementById("matNearExpire").textContent = nearExpireItems);
+    
+    console.log(`📊 Updated near-to-expire count: ${nearExpireItems} items`);
+  } catch (err) {
+    console.error("Error updating near-to-expire count:", err);
+  }
+}
+
 
 // ==================== CHART FUNCTIONS ====================
-let warehouseChartInstance = null;
+let projectDistributionChartInstance = null;
 
-function updateWarehouseChart() {
-  const canvas = document.getElementById("warehouseChart");
+function updateProjectDistributionChart() {
+  const canvas = document.getElementById("projectDistributionChart");
   if (!canvas) return;
 
-  // Count materials by warehouse
-  const warehouseData = {};
+  // Count materials by project using same logic as Stock Monitoring
+  const projectData = {};
+  
   allMaterials.forEach(mat => {
-    const wh = mat.warehouse || "Unassigned";
-    warehouseData[wh] = (warehouseData[wh] || 0) + parseInt(mat.quantity || 0);
+    // Only count materials that are actually in stock (same as Stock Monitoring tab)
+    const quantity = parseInt(mat.quantity) || 0;
+    if (!mat.itemCode || !mat.material || !mat.warehouse || quantity === 0) return;
+    
+    // Sum quantity for each project/warehouse
+    const projectId = mat.warehouse;
+    projectData[projectId] = (projectData[projectId] || 0) + quantity;
   });
 
   const labels = [];
@@ -1807,50 +1920,61 @@ function updateWarehouseChart() {
     "#607D8B", "#FF5722", "#8BC34A", "#FFEB3B"
   ];
   
-  allWarehouses.forEach((wh, idx) => {
-    const id = wh.id;
-    labels.push(wh.name);
-    data.push(warehouseData[id] || 0);
-  });
-
-  // Destroy previous chart if it exists
-  if (warehouseChartInstance) {
-    warehouseChartInstance.destroy();
+  // Show ALL projects from project management with their stock totals
+  if (allProjects && allProjects.length > 0) {
+    const orderedProjects = getProjectManagementOrderedProjects();
+    orderedProjects.forEach((project, idx) => {
+      const projectCode = project.code || project.projectId || project.name || project.id;
+      const projectDocId = project.id;
+      
+      // Try matching by both code AND document ID
+      const quantity = projectData[projectCode] || projectData[projectDocId] || 0;
+      
+      labels.push(projectCode);
+      data.push(quantity);
+    });
   }
 
-  // Create new PIE chart
+  // Destroy previous chart if it exists
+  if (projectDistributionChartInstance) {
+    projectDistributionChartInstance.destroy();
+  }
+
+  // Create new HORIZONTAL BAR chart
   const ctx = canvas.getContext("2d");
-  warehouseChartInstance = new Chart(ctx, {
-    type: "pie",
+  projectDistributionChartInstance = new Chart(ctx, {
+    type: "bar",
     data: {
-      labels: labels.length > 0 ? labels : ["No Data"],
+      labels: labels.length > 0 ? labels : ["No Projects"],
       datasets: [{
-        data: data.length > 0 ? data : [1],
+        label: "Quantity (units)",
+        data: data.length > 0 ? data : [0],
         backgroundColor: colors.slice(0, Math.max(labels.length, 1)),
         borderColor: "#0f1419",
-        borderWidth: 2
+        borderWidth: 1
       }]
     },
     options: {
+      indexAxis: "y",
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
         legend: {
-          position: "bottom",
+          display: true,
+          position: "top",
           labels: {
             color: "#d0d0d0",
-            font: { size: 12, weight: "600" },
-            padding: 15,
-            usePointStyle: true
+            font: { size: 11, weight: "600" },
+            padding: 10
           }
         },
         tooltip: {
           callbacks: {
             label: function(context) {
-              const value = context.parsed;
+              const value = context.parsed.x;
               const total = context.dataset.data.reduce((a, b) => a + b, 0);
-              const percentage = ((value / total) * 100).toFixed(1);
-              return context.label + ": " + value + " units (" + percentage + "%)";
+              const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+              return "Quantity: " + value + " units (" + percentage + "%)";
             }
           },
           backgroundColor: "rgba(0, 0, 0, 0.8)",
@@ -1858,6 +1982,27 @@ function updateWarehouseChart() {
           bodyColor: "#fff",
           borderColor: "#666",
           borderWidth: 1
+        }
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          ticks: {
+            color: "#d0d0d0",
+            font: { size: 11 }
+          },
+          grid: {
+            color: "rgba(255, 255, 255, 0.1)"
+          }
+        },
+        y: {
+          ticks: {
+            color: "#d0d0d0",
+            font: { size: 11, weight: "600" }
+          },
+          grid: {
+            display: false
+          }
         }
       }
     }
@@ -2509,7 +2654,7 @@ function renderMaterials(warehouse, searchQuery = "") {
   renderMaterialsWithFilter(warehouse, searchQuery, "");
 }
 
-function renderMaterialsWithFilter2(warehouse, searchQuery = "", statusFilter = "") {
+async function renderMaterialsWithFilter2(warehouse, searchQuery = "", statusFilter = "") {
   console.log("=== renderMaterialsWithFilter2 called ===");
   console.log("selectedCategory:", selectedCategory);
   console.log("materialColumns2:", materialColumns2);
@@ -2687,7 +2832,7 @@ function renderMaterialsWithFilter2(warehouse, searchQuery = "", statusFilter = 
   updatePaginationControls();
   
   // Update summary cards for this warehouse
-  updateMaterialSummaries2(warehouse);
+  await updateMaterialSummaries2(warehouse);
 }
 
 function updatePaginationControls() {
@@ -2725,17 +2870,46 @@ window.goToNextPage = function() {
   }
 };
 
-function renderMaterials2(warehouse, searchQuery = "") {
+async function renderMaterials2(warehouse, searchQuery = "") {
   console.log("renderMaterials2 called with warehouse:", warehouse, "searchQuery:", searchQuery);
   currentPage = 1; // Reset to first page on new search/filter
   console.log("Reset currentPage to 1");
   renderMaterialsWithFilter2(warehouse, searchQuery, "");
 }
 
-function updateMaterialSummaries2(warehouse = "all") {
+async function updateMaterialSummaries2(warehouse = "all") {
   let total = 0, items = 0, low = 0, nearExpire = 0;
   
-  // Group materials by itemCode + material to deduplicate (same material in different warehouses)
+  console.log(`📊 updateMaterialSummaries2 called with warehouse: ${warehouse}, allMaterials length: ${allMaterials.length}`);
+  
+  // Ensure warehouses and projects are loaded for validation
+  if (!allWarehouses || allWarehouses.length === 0) {
+    try {
+      const whSnap = await getDocsFromServer(collection(db, "warehouses"));
+      allWarehouses = [];
+      whSnap.forEach(doc => {
+        allWarehouses.push({ id: doc.id, ...doc.data() });
+      });
+      console.log(`✅ Card count: Loaded ${allWarehouses.length} warehouses`);
+    } catch (err) {
+      console.error("Error loading warehouses:", err);
+    }
+  }
+  
+  if (!allProjects || allProjects.length === 0) {
+    try {
+      const projSnap = await getDocsFromServer(collection(db, "projects"));
+      allProjects = [];
+      projSnap.forEach(doc => {
+        allProjects.push({ id: doc.id, ...doc.data() });
+      });
+      console.log(`✅ Card count: Loaded ${allProjects.length} projects`);
+    } catch (err) {
+      console.error("Error loading projects:", err);
+    }
+  }
+  
+  // Group materials by itemCode + material + specification to keep different specs separate
   const groupedMaterials = {};
   
   allMaterials.forEach(mat => {
@@ -2754,13 +2928,16 @@ function updateMaterialSummaries2(warehouse = "all") {
     if (!groupedMaterials[key]) {
       groupedMaterials[key] = {
         totalQuantity: 0,
-        expiryDate: mat.expiryDate
+        expiryDate: mat.expiryDate,
+        agingDays: mat.agingDays
       };
     }
     
     // Sum quantities across all warehouses (or within selected warehouse)
     groupedMaterials[key].totalQuantity += quantity;
   });
+  
+  console.log(`📊 Grouped materials: ${Object.keys(groupedMaterials).length} unique items`);
   
   // Count unique items and calculate totals
   Object.values(groupedMaterials).forEach(mat => {
@@ -2769,7 +2946,8 @@ function updateMaterialSummaries2(warehouse = "all") {
     items++;
   });
   
-  // For low stock and near-expiry: check the materials
+  // For low stock and near-expiry: check each INDIVIDUAL material (not grouped)
+  // This way materials with different specs are counted separately
   allMaterials.forEach(mat => {
     const quantity = parseInt(mat.quantity) || 0;
     const minQty = parseInt(mat.minimumQuantity) || 10;
@@ -2787,16 +2965,9 @@ function updateMaterialSummaries2(warehouse = "all") {
       low++;
     }
     
-    // Count if near to expire (within 30 days from today) AND warehouse still exists
+    // Count if near to expire (when 30% of shelf life remains)
     if (mat.expiryDate) {
       try {
-        // Only count if warehouse still exists
-        const warehouseExists = allWarehouses.some(w => w.id === mat.warehouse);
-        if (!warehouseExists) {
-          console.warn(`⚠️ Material ${mat.itemCode} warehouse deleted, not counting in near-expire`);
-          return;
-        }
-        
         const expiryDate = new Date(mat.expiryDate);
         const today = new Date();
         
@@ -2805,10 +2976,14 @@ function updateMaterialSummaries2(warehouse = "all") {
         expiryDate.setHours(0, 0, 0, 0);
         
         const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
-        console.log(`Material: ${mat.material}, ExpiryDate: ${expiryDate.toLocaleDateString()}, Today: ${today.toLocaleDateString()}, Days: ${daysUntilExpiry}`);
+        const agingDays = mat.agingDays || 90; // Default to 90 if not set
+        const nearExpiryThresholdDays = Math.ceil(agingDays * 0.30);
         
-        // Expired (0 or negative) OR coming up soon (1-30 days)
-        if (daysUntilExpiry <= 30) {
+        console.log(`🔍 Check near-expire: ${mat.itemCode} (${mat.material}) [${mat.specification || "-"}] - Qty: ${quantity}, ExpiryDate: ${expiryDate.toLocaleDateString()}, Days: ${daysUntilExpiry}, Threshold: ${nearExpiryThresholdDays}`);
+        
+        // Expired (0 or negative) OR coming up soon (when 30% or less of shelf life remains)
+        if (daysUntilExpiry <= nearExpiryThresholdDays) {
+          console.log(`✅ COUNTED as near-expire: ${mat.itemCode} (${mat.material}) [${mat.specification || "-"}]`);
           nearExpire++;
         }
       } catch (e) {
@@ -2816,6 +2991,8 @@ function updateMaterialSummaries2(warehouse = "all") {
       }
     }
   });
+  
+  console.log(`📊 Summary Update - Total: ${total}, Items: ${items}, Low: ${low}, Near Expire: ${nearExpire}`);
   
   // Update all summary card elements (visible in all tabs)
   document.getElementById("matTotalStock") && (document.getElementById("matTotalStock").textContent = total);
@@ -3358,6 +3535,18 @@ async function openMaterialModal(material = null) {
 }
 
 window.editMaterial = (id) => {
+  console.log('🔐 ===== EDIT MATERIAL PERMISSION CHECK ===== ');
+  const hasEditPermission = checkUserPermission('inventory', 'edit');
+  console.log('Edit permission result:', hasEditPermission);
+  // Check permission to edit
+  if (!hasEditPermission) {
+    const message = getPermissionErrorMessage('inventory', 'edit');
+    console.log('🚫 BLOCKING EDIT');
+    alert(message);
+    return;
+  }
+  console.log('✅ Edit permission granted, fetching material data');
+  
   // Fetch FRESH data from database instead of using cached allMaterials
   getDoc(doc(db, "materials", id)).then(async (docSnap) => {
     if (docSnap.exists()) {
@@ -3378,6 +3567,12 @@ window.editMaterial = (id) => {
 };
 
 window.deleteMaterial = async (id) => {
+  // 🔐 CHECK PERMISSION: User must have delete permission in inventory module
+  if (!checkUserPermission('inventory', 'delete')) {
+    alert(getPermissionErrorMessage('inventory', 'delete'));
+    return;
+  }
+
   console.log("Delete button clicked for:", id);
   const material = allMaterials.find(m => m.id === id);
   if (!material) {
@@ -3439,8 +3634,8 @@ window.deleteMaterial = async (id) => {
       await logActivity("material", "delete", `Deleted material: ${material?.material}`);
       showAlert("✅ Material deleted!", "success");
       await loadMaterials();
-      renderMaterials2("all");
-      updateMaterialSummaries2();
+      await renderMaterials2("all");
+      await updateMaterialSummaries2();
       setTimeout(() => {
         updateDailyStockData().catch(e => console.error("Error updating daily stock:", e));
         updateWeeklyStockChart();
@@ -3605,6 +3800,7 @@ window.deleteUser = async (userId) => {
 // ==================== DELIVERY FUNCTIONS ====================
 
 // Fetch delivery status from PO tracking based on delivery items' PO numbers AND material details
+// NOW READS THE STORED deliveryStatus FIELD FROM PURCHASING MODULE
 async function getLinkedDeliveryStatus(delivery) {
   try {
     console.log('🔍 Fetching linked delivery status for delivery:', delivery.id, 'Items:', delivery.items);
@@ -3614,15 +3810,14 @@ async function getLinkedDeliveryStatus(delivery) {
       return "No Items";
     }
     
-    // Collect items with their PO numbers and material details
+    // Collect delivery items with their PO numbers
     const deliveryItems = delivery.items
       .filter(item => item.poNo && item.poNo.trim() !== '')
       .map(item => ({
-        poNo: item.poNo.trim(),
+        poNo: item.poNo.trim().toUpperCase(),
         material: (item.materialName || item.material || '').toLowerCase().trim(),
         itemCode: (item.itemCode || '').toLowerCase().trim(),
-        specification: (item.specification || '').toLowerCase().trim(),
-        brand: (item.brand || '').toLowerCase().trim()
+        specification: (item.specification || '').toLowerCase().trim()
       }));
     
     console.log('📦 Delivery items for matching:', deliveryItems);
@@ -3636,121 +3831,263 @@ async function getLinkedDeliveryStatus(delivery) {
     const projectsRef = collection(db, "projects");
     const projectsSnap = await getDocs(projectsRef);
     
-    const deliveryStatuses = [];
+    const materialStatusMap = {}; // Group statuses by material
     let matchesFound = 0;
     
     projectsSnap.forEach(projectDoc => {
       const project = projectDoc.data();
       if (project.items && Array.isArray(project.items)) {
         project.items.forEach(item => {
-          const itemPoNo = (item.poNumber || item.purchaseOrderNo || item.poNo || '').trim();
+          // Get PO number from various possible field names
+          const itemPoNo = (item.poNumber || item.purchaseOrderNo || item.poNo || '').trim().toUpperCase();
+          const itemMaterial = (item.materialName || item.material || item.itemDescription || item.description || '').toLowerCase().trim();
+          const itemCode = (item.itemCode || item.itemNumber || '').toLowerCase().trim();
+          const itemSpec = (item.specification || '').toLowerCase().trim();
           
-          // Check if this PO matches one of our delivery's PO numbers
-          if (itemPoNo) {
-            // Find matching delivery item by PO and material details
-            const matchingDeliveryItem = deliveryItems.find(delItem => {
-              if (delItem.poNo !== itemPoNo) return false;
-              
-              // Match by material name, item code, or specification
-              const itemMaterial = (item.itemDescription || item.description || '').toLowerCase().trim();
-              const itemCode = (item.itemCode || item.itemNumber || '').toLowerCase().trim();
-              const itemSpec = (item.specification || '').toLowerCase().trim();
-              const itemBrand = (item.bestSupplier || item.brand || '').toLowerCase().trim();
-              
-              // Try to match by various criteria
-              const materialMatch = itemMaterial && delItem.material && itemMaterial.includes(delItem.material);
-              const codeMatch = itemCode && delItem.itemCode && (itemCode === delItem.itemCode || itemCode.includes(delItem.itemCode) || delItem.itemCode.includes(itemCode));
-              const specMatch = itemSpec && delItem.specification && itemSpec.includes(delItem.specification);
-              
-              console.log(`📍 Comparing PO=${itemPoNo}:`, {
-                poMatch: true,
-                delMaterial: delItem.material,
-                itemMaterial: itemMaterial,
-                materialMatch,
-                delCode: delItem.itemCode,
-                itemCode,
-                codeMatch,
-                delSpec: delItem.specification,
-                itemSpec,
-                specMatch
-              });
-              
-              return materialMatch || codeMatch || specMatch;
-            });
+          if (!itemPoNo) return; // Skip if no PO number
+          
+          // Find matching delivery item by PO number AND MOST SPECIFIC detail available
+          deliveryItems.forEach(delItem => {
+            if (delItem.poNo !== itemPoNo) return; // Must match PO number
             
-            if (matchingDeliveryItem) {
-              matchesFound++;
-              console.log('✅ Found matching item in PO tracking:', itemPoNo, 'Item:', item.itemDescription || item.itemNumber);
-              
-              // Calculate delivery status based on received quantity
-              const quantity = parseFloat(item.quantity || item.poQty || 0);
-              const receivedQty = parseFloat(item.receivedQty || item.received || 0);
-              let status = item.deliveryStatus || 'PENDING';
-              
-              if (quantity > 0) {
-                if (receivedQty >= quantity) {
-                  status = 'FULLY RECEIVED';
-                } else if (receivedQty > 0) {
-                  status = 'PARTIALLY RECEIVED';
-                } else {
-                  status = 'PENDING';
-                }
-              }
-              
-              deliveryStatuses.push({
-                poNo: itemPoNo,
-                status: status,
-                quantity: quantity,
-                receivedQty: receivedQty,
-                material: matchingDeliveryItem.material
-              });
+            const delMaterial = delItem.material.toLowerCase().trim();
+            const delCode = delItem.itemCode.toLowerCase().trim();
+            const delSpec = delItem.specification.toLowerCase().trim();
+            
+            // Use MOST SPECIFIC matching: itemCode first, then spec+material, then material alone
+            let isMatch = false;
+            let matchType = 'none';
+            
+            // PRIMARY: Match by itemCode (most specific)
+            if (delCode && itemCode && delCode === itemCode) {
+              isMatch = true;
+              matchType = 'code';
             }
-          }
+            // SECONDARY: Match by specification + material combo
+            else if (delSpec && itemSpec && delSpec === itemSpec && delMaterial === itemMaterial) {
+              isMatch = true;
+              matchType = 'spec+material';
+            }
+            // TERTIARY: Match by material alone (fallback)
+            else if (delMaterial === itemMaterial) {
+              isMatch = true;
+              matchType = 'material';
+            }
+            
+            if (!isMatch) {
+              return; // No match
+            }
+            
+            // For each delivery item, match only ONCE with the BEST matching project item
+            // Once matched, don't group by material - just take this ONE item's status
+            matchesFound++;
+            console.log('✅ Matched by PO + ' + matchType + ':', itemPoNo, 'Material:', delItem.material, 'Code:', delItem.itemCode);
+            
+            // Calculate delivery status based on received quantities
+            const quantity = parseFloat(item.quantity || item.poQty || 0);
+            let receivedQty = parseFloat(item.receivedQty || item.received || 0);
+            
+            if (isNaN(receivedQty) || receivedQty === '') {
+              receivedQty = 0;
+            }
+            
+            let status = 'PENDING';
+            if (receivedQty > 0) {
+              if (receivedQty >= quantity && quantity > 0) {
+                status = 'FULLY RECEIVED';
+              } else if (receivedQty < quantity) {
+                status = 'PARTIALLY RECEIVED';
+              }
+            } else {
+              status = 'PENDING';
+            }
+            
+            console.log('📊 Calculated delivery status for', delItem.material + ':', { qty: quantity, receivedQty: receivedQty, status: status });
+            
+            // Store ONLY this ONE matched item's status per material
+            const materialKey = delItem.material;
+            !materialStatusMap[materialKey] && (materialStatusMap[materialKey] = { material: delItem.material, statuses: [], poNos: [] });
+            
+            // Since we want ONE result per delivery item, only push once
+            if (!materialStatusMap[materialKey].statuses.includes(status)) {
+              materialStatusMap[materialKey].statuses.push(status);
+              materialStatusMap[materialKey].poNos.push(itemPoNo);
+            }
+          });
         });
       }
     });
     
-    console.log('📊 Delivery statuses found:', deliveryStatuses, 'Total matches:', matchesFound);
+    console.log('📊 All delivery items matched:', matchesFound);
     
-    if (deliveryStatuses.length === 0) {
+    if (matchesFound === 0 || Object.keys(materialStatusMap).length === 0) {
       console.warn('⚠️ No matching items found in project tracking');
       return "Not Tracked";
     }
     
-    // Summarize statuses:
-    const statuses = deliveryStatuses.map(d => d.status);
-    const uniqueStatuses = [...new Set(statuses)];
-    
-    console.log('📋 Unique statuses:', uniqueStatuses);
-    
-    if (uniqueStatuses.length === 1) {
-      // All items have the same status
-      const finalStatus = uniqueStatuses[0];
-      console.log('✅ Final status (all same):', finalStatus);
-      return finalStatus;
-    } else {
-      // Mixed statuses - return a combination
-      const pendingCount = statuses.filter(s => s === 'PENDING').length;
-      const partialCount = statuses.filter(s => s === 'PARTIALLY RECEIVED').length;
-      const fullCount = statuses.filter(s => s === 'FULLY RECEIVED').length;
-      
-      if (pendingCount > 0) {
-        const result = `${pendingCount} PENDING`;
-        console.log('✅ Final status (mixed):', result);
-        return result;
-      } else if (partialCount > 0) {
-        const result = `${partialCount} PARTIAL / ${fullCount} FULL`;
-        console.log('✅ Final status (mixed):', result);
-        return result;
+    // Convert materialStatusMap to array and get the status per material
+    const materialStatuses = Object.values(materialStatusMap).map(m => {
+      // For each material, get the "worst" status (PENDING > PARTIALLY RECEIVED > FULLY RECEIVED)
+      let worstStatus = 'FULLY RECEIVED';
+      for (const status of m.statuses) {
+        if (status === 'PENDING') {
+          worstStatus = 'PENDING';
+          break;
+        } else if (status === 'PARTIALLY RECEIVED' && worstStatus !== 'PENDING') {
+          worstStatus = 'PARTIALLY RECEIVED';
+        }
       }
       
-      const result = 'MIXED';
-      console.log('✅ Final status (mixed):', result);
-      return result;
+      console.log('📌 Material:', m.material, '| POs:', m.poNos.join(','), '| Final Status:', worstStatus);
+      
+      return {
+        material: m.material,
+        status: worstStatus
+      };
+    });
+    
+    console.log('📋 Status per material:', materialStatuses);
+    
+    // Determine OVERALL delivery status based on ALL materials
+    // Use "worst" status priority: PENDING > PARTIALLY RECEIVED > FULLY RECEIVED
+    const hasPending = materialStatuses.some(m => m.status === 'PENDING');
+    const hasPartial = materialStatuses.some(m => m.status === 'PARTIALLY RECEIVED');
+    
+    let finalStatus = '';
+    
+    if (hasPending) {
+      // If ANY material is PENDING, the delivery is PENDING
+      // Count how many materials are pending for detailed display
+      const pendingCount = materialStatuses.filter(m => m.status === 'PENDING').length;
+      finalStatus = pendingCount === 1 || materialStatuses.length === 1 ? 'PENDING' : `${pendingCount} PENDING`;
+    } else if (hasPartial) {
+      // If ANY material is PARTIALLY RECEIVED (and none are PENDING), delivery is PARTIALLY RECEIVED
+      const partialCount = materialStatuses.filter(m => m.status === 'PARTIALLY RECEIVED').length;
+      finalStatus = partialCount === 1 || materialStatuses.length === 1 ? 'PARTIALLY RECEIVED' : `${partialCount} PARTIAL`;
+    } else {
+      // All materials are FULLY RECEIVED
+      finalStatus = 'FULLY RECEIVED';
     }
+    
+    console.log('✅ Final delivery status:', finalStatus, '(from', materialStatuses.length, 'materials)');
+    // Store detailed breakdown for modal use
+    window._lastMaterialStatuses = materialStatuses;
+    return finalStatus;
   } catch (error) {
     console.error('❌ Error fetching linked delivery status:', error);
     return 'Error';
+  }
+}
+
+// Get per-material delivery status (calculated from quantities, NOT stored field)
+async function getDeliveryStatusByMaterial(delivery) {
+  try {
+    if (!delivery.items || delivery.items.length === 0) {
+      return {};
+    }
+    
+    const deliveryItems = delivery.items
+      .filter(item => item.poNo && item.poNo.trim() !== '')
+      .map(item => ({
+        poNo: item.poNo.trim().toUpperCase(),
+        material: (item.materialName || item.material || '').toLowerCase().trim(),
+        itemCode: (item.itemCode || '').toLowerCase().trim(),
+        specification: (item.specification || '').toLowerCase().trim()
+      }));
+    
+    if (deliveryItems.length === 0) {
+      return {};
+    }
+    
+    const projectsRef = collection(db, "projects");
+    const projectsSnap = await getDocs(projectsRef);
+    
+    const materialStatusMap = {};
+    
+    projectsSnap.forEach(projectDoc => {
+      const project = projectDoc.data();
+      if (project.items && Array.isArray(project.items)) {
+        project.items.forEach(item => {
+          const itemPoNo = (item.poNumber || item.purchaseOrderNo || item.poNo || '').trim().toUpperCase();
+          const itemMaterial = (item.materialName || item.material || item.itemDescription || item.description || '').toLowerCase().trim();
+          const itemCode = (item.itemCode || item.itemNumber || '').toLowerCase().trim();
+          const itemSpec = (item.specification || '').toLowerCase().trim();
+          
+          if (!itemPoNo) return;
+          
+          deliveryItems.forEach(delItem => {
+            if (delItem.poNo !== itemPoNo) return; // Must match PO
+            
+            const delMaterial = delItem.material.toLowerCase().trim();
+            const delCode = delItem.itemCode.toLowerCase().trim();
+            const delSpec = delItem.specification.toLowerCase().trim();
+            
+            // Use MOST SPECIFIC matching: itemCode first, then spec+material, then material alone
+            let isMatch = false;
+            let matchType = 'none';
+            
+            // PRIMARY: Match by itemCode (most specific)
+            if (delCode && itemCode && delCode === itemCode) {
+              isMatch = true;
+              matchType = 'code';
+            }
+            // SECONDARY: Match by specification + material combo
+            else if (delSpec && itemSpec && delSpec === itemSpec && delMaterial === itemMaterial) {
+              isMatch = true;
+              matchType = 'spec+material';
+            }
+            // TERTIARY: Match by material alone (fallback)
+            else if (delMaterial === itemMaterial) {
+              isMatch = true;
+              matchType = 'material';
+            }
+            
+            if (!isMatch) {
+              return; // No match
+            }
+            
+            // Calculate delivery status from quantities - SAME LOGIC AS PURCHASING MODULE
+            const quantity = parseFloat(item.quantity || item.poQty || 0);
+            let receivedQty = parseFloat(item.receivedQty || item.received || 0);
+            
+            if (isNaN(receivedQty) || receivedQty === '') {
+              receivedQty = 0;
+            }
+            
+            let status = 'PENDING';
+            if (receivedQty > 0) {
+              if (receivedQty >= quantity && quantity > 0) {
+                status = 'FULLY RECEIVED';
+              } else if (receivedQty < quantity) {
+                status = 'PARTIALLY RECEIVED';
+              }
+            } else {
+              status = 'PENDING';
+            }
+            
+            const materialKey = delItem.material;
+            if (!materialStatusMap[materialKey]) {
+              materialStatusMap[materialKey] = status;
+            } else {
+              // If already matched, take the WORST case (shouldn't happen with proper matching, but just in case)
+              const currentStatus = materialStatusMap[materialKey];
+              if (status === 'PENDING') {
+                materialStatusMap[materialKey] = 'PENDING';
+              } else if (status === 'PARTIALLY RECEIVED' && currentStatus !== 'PENDING') {
+                materialStatusMap[materialKey] = 'PARTIALLY RECEIVED';
+              }
+            }
+            
+            console.log('🔹 Material status:', materialKey, '=', status, '(qty:', quantity, 'received:', receivedQty, ')');
+          });
+        });
+      }
+    });
+    
+    return materialStatusMap;
+  } catch (error) {
+    console.error('❌ Error getting per-material status:', error);
+    return {};
   }
 }
 
@@ -3758,28 +4095,39 @@ function loadDeliveryColumns() {
   const saved = localStorage.getItem(DELIVERY_COLUMNS_KEY);
   const defaultFields = {
     "Date": "date",
-    "Warehouse": "warehouse",
+    "Project": "warehouse",
     "Control No": "controlNo",
     "Client PO": "clientPO",
     "Items Count": "itemsCount",
     "Type": "type",
+    "DR Link": "drLink",
     "Status": "status"
   };
   
   if (saved) {
     deliveryColumns = JSON.parse(saved);
+    
+    // MIGRATION: Convert "Warehouse" to "Project" for existing saved columns
+    deliveryColumns = deliveryColumns.map(col => {
+      if (col.name === "Warehouse") {
+        col.name = "Project";
+      }
+      return col;
+    });
+    
     // Ensure all columns have field property by matching original names to fields
     deliveryColumns = deliveryColumns.map((col, idx) => {
       if (!col.field) {
         // Try to find the field by matching id with default column ids
         const defaultColumns = [
           { id: 1, name: "Date", field: "date" },
-          { id: 2, name: "Warehouse", field: "warehouse" },
+          { id: 2, name: "Project", field: "warehouse" },
           { id: 3, name: "Control No", field: "controlNo" },
           { id: 4, name: "Client PO", field: "clientPO" },
           { id: 5, name: "Items Count", field: "itemsCount" },
           { id: 6, name: "Type", field: "type" },
-          { id: 7, name: "Status", field: "status" }
+          { id: 7, name: "DR Link", field: "drLink" },
+          { id: 8, name: "Status", field: "status" }
         ];
         const defaultCol = defaultColumns.find(dc => dc.id === col.id);
         if (defaultCol) {
@@ -3793,21 +4141,44 @@ function loadDeliveryColumns() {
     // Default columns for delivery receipt display table (not the form)
     deliveryColumns = [
       { id: 1, name: "Date", field: "date" },
-      { id: 2, name: "Warehouse", field: "warehouse" },
+      { id: 2, name: "Project", field: "warehouse" },
       { id: 3, name: "Control No", field: "controlNo" },
       { id: 4, name: "Client PO", field: "clientPO" },
       { id: 5, name: "Items Count", field: "itemsCount" },
       { id: 6, name: "Type", field: "type" },
-      { id: 7, name: "Status", field: "status" }
+      { id: 7, name: "DR Link", field: "drLink" },
+      { id: 8, name: "Status", field: "status" }
     ];
     saveDeliveryColumns();
+  }
+
+  // Ensure DR Link column exists and is positioned before Status
+  const hasDRLink = deliveryColumns.find(col => col.name === 'DR Link' || col.field === 'drLink');
+  if (!hasDRLink) {
+    const statusIndex = deliveryColumns.findIndex(col => col.name === 'Status' || col.field === 'status');
+    const drLinkColumn = { id: 7, name: "DR Link", field: "drLink" };
+    if (statusIndex >= 0) {
+      deliveryColumns.splice(statusIndex, 0, drLinkColumn);
+    } else {
+      deliveryColumns.push(drLinkColumn);
+    }
+    saveDeliveryColumns();
+    console.log('✅ Added missing DR Link column to delivery columns');
   }
   
   // Ensure Status column exists (add if missing)
   if (!deliveryColumns.find(col => col.name === 'Status' || col.field === 'status')) {
-    deliveryColumns.push({ id: 7, name: "Status", field: "status" });
+    deliveryColumns.push({ id: 8, name: "Status", field: "status" });
     saveDeliveryColumns();
     console.log('✅ Added missing Status column to delivery columns');
+  }
+
+  const drLinkIndex = deliveryColumns.findIndex(col => col.name === 'DR Link' || col.field === 'drLink');
+  const statusIndex = deliveryColumns.findIndex(col => col.name === 'Status' || col.field === 'status');
+  if (drLinkIndex >= 0 && statusIndex >= 0 && drLinkIndex > statusIndex) {
+    const [drLinkCol] = deliveryColumns.splice(drLinkIndex, 1);
+    deliveryColumns.splice(statusIndex, 0, drLinkCol);
+    saveDeliveryColumns();
   }
   
   renderDeliveryTable();
@@ -4450,8 +4821,8 @@ function renderMaterialTable2() {
   if (!materialsTable) return;
   materialsTable.innerHTML = "";
   materialColumns2.forEach(col => {
-    // Skip warehouse column for Materials tab
-    if (col.name === "Warehouse") return;
+    // Skip warehouse/project column for Materials tab
+    if (col.name === "Warehouse" || col.name === "Project") return;
     materialsTable.innerHTML += `<th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">${col.name}</th>`;
   });
   materialsTable.innerHTML += `<th style="padding:12px;text-align:center;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">Actions</th>`;
@@ -4464,14 +4835,24 @@ function renderDeliveryTable() {
   
   // Use default columns if empty
   const cols = deliveryColumns && deliveryColumns.length > 0 ? deliveryColumns : [
-    { name: "Date" }, { name: "Warehouse" }, { name: "Control No" }, 
+    { name: "Date" }, { name: "Project" }, { name: "Control No" }, 
     { name: "Client PO" }, { name: "Items Count" }, { name: "Type" }
   ];
   
   cols.forEach(col => {
-    headerRow.innerHTML += `<th style="padding:12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">${col.name}</th>`;
+    const colName = col.name || "";
+    let headerStyle = "padding:11px 12px;text-align:left;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);white-space:nowrap;";
+    if (colName === "Date") headerStyle += "min-width:110px;";
+    if (colName === "Project" || colName === "Warehouse") headerStyle += "min-width:260px;";
+    if (colName === "Control No") headerStyle += "min-width:170px;";
+    if (colName === "Client PO") headerStyle += "min-width:100px;";
+    if (colName === "Items Count") headerStyle += "min-width:95px;";
+    if (colName === "Type") headerStyle += "min-width:95px;";
+    if (colName === "DR Link") headerStyle += "min-width:90px;text-align:center;";
+    if (colName === "Status") headerStyle += "min-width:165px;";
+    headerRow.innerHTML += `<th style="${headerStyle}">${col.name}</th>`;
   });
-  headerRow.innerHTML += `<th style="padding:12px;text-align:center;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);">Actions</th>`;
+  headerRow.innerHTML += `<th style="padding:11px 12px;text-align:center;color:#0a9b03;font-weight:600;border-bottom:2px solid rgba(10,155,3,.3);white-space:nowrap;min-width:180px;">Actions</th>`;
 }
 
 function renderDeliveryForm() {
@@ -4608,6 +4989,7 @@ async function loadMaterialRequests() {
       allMaterialRequests.push({ id: doc.id, ...doc.data() });
     });
     renderMRTable();
+    renderBorrowApprovals();
   } catch (err) {
     console.error("Error loading MRs:", err);
   }
@@ -4636,8 +5018,17 @@ function renderMRTable() {
   });
   
   sortedMRs.forEach(mr => {
-    const warehouseName = allWarehouses.find(w => w.id === mr.warehouse)?.name || mr.warehouse;
+    // Lookup project name from the mr.project field
+    let projectName = "N/A";
+    if (mr.project) {
+      const project = allProjects.find(p => p.id === mr.project);
+      if (project) {
+        projectName = project.name || project.projectName || project.project_name || mr.project;
+      }
+    }
+    
     const statusColor = mr.status === "Pending" ? "#ff9800" : "#0a9b03";
+    const mrLinkValue = mr.mrLink || mr.link || mr.materialRequestLink || "";
     
     // Handle both ISO strings and Firestore Timestamp objects
     let createdDate = "Unknown";
@@ -4655,10 +5046,11 @@ function renderMRTable() {
       <tr style="border-bottom:1px solid rgba(10,155,3,0.1);">
         <td style="padding:10px;color:#d0d0d0;">${mr.mrNo}</td>
         <td style="padding:10px;color:#d0d0d0;">${mr.createdBy}</td>
-        <td style="padding:10px;color:#d0d0d0;">${warehouseName}</td>
+        <td style="padding:10px;color:#d0d0d0;">${projectName}</td>
         <td style="padding:10px;color:#d0d0d0;">${mr.type === "borrow" ? "🔄 Borrow" : "📦 New Project"}</td>
         <td style="padding:10px;color:#d0d0d0;">${mr.items?.length || 0}</td>
         <td style="padding:10px;color:#d0d0d0;">${createdDate}</td>
+        <td style="padding:10px;color:#d0d0d0;">${mrLinkValue}</td>
         <td style="padding:10px;"><span style="background:${statusColor};color:white;padding:4px 8px;border-radius:3px;font-size:11px;font-weight:600;">${mr.status}</span></td>
         <td style="padding:10px;text-align:center;display:flex;gap:5px;justify-content:center;">
           <button style="background:#0a9b03;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;" onclick="window.viewMRDetails('${mr.id}')">View</button>
@@ -4752,7 +5144,7 @@ window.viewMRDetails = function(mrId) {
   }
   
   const modalContent = `
-    <div style="background:#1a2332;border-radius:8px;padding:30px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;color:#e0e0e0;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+    <div style="background:#1a2332;border-radius:8px;padding:30px;max-width:1200px;width:95%;max-height:85vh;overflow-y:auto;color:#e0e0e0;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
       <h2 style="margin:0 0 20px 0;color:#0a9b03;">Material Request Details</h2>
       
       <div style="background:rgba(10,155,3,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:8px;padding:15px;margin-bottom:20px;">
@@ -4804,6 +5196,493 @@ window.viewMRDetails = function(mrId) {
   modal.onclick = (e) => {
     if (e.target === modal) modal.remove();
   };
+};
+
+// ==================== BORROW APPROVAL FUNCTIONS ====================
+function getPendingBorrowApprovals() {
+  return allMaterialRequests.filter(mr =>
+    mr.type === "borrow" && mr.status === "Pending_Approval"
+  );
+}
+
+function buildBorrowApprovalCardHtml(mr) {
+  const sourceWarehouse = allWarehouses.find(w => w.id === mr.sourceWarehouseId);
+  const receivingWarehouse = allWarehouses.find(w => w.id === mr.borrowWarehouseId);
+  const sourceName = sourceWarehouse?.name || mr.sourceWarehouseId || "N/A";
+  const receivingName = receivingWarehouse?.name || mr.borrowWarehouseId || "N/A";
+  const createdBy = mr.createdBy || "Unknown";
+  const items = Array.isArray(mr.items) ? mr.items : [];
+  const previewItems = items.slice(0, 2);
+
+  const previewHtml = previewItems.map(item => `
+    <div style="font-size:12px;color:#d0d0d0;line-height:1.4;">
+      <strong>${item.material || item.materialName || "Item"}</strong> • Qty: ${item.quantity || 0} ${item.unit || "PCS"}
+    </div>
+  `).join("");
+
+  const moreText = items.length > 2
+    ? `<div style="font-size:11px;color:#a0a0a0;margin-top:4px;">+${items.length - 2} more item(s)</div>`
+    : "";
+
+  return `
+    <div style="background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.35);border-radius:8px;padding:12px;margin-bottom:10px;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;">
+      <div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+          <span style="color:#ff9800;font-weight:700;font-size:12px;">${mr.mrNo || "N/A"}</span>
+          <span style="color:#a0a0a0;font-size:12px;">${sourceName} → ${receivingName}</span>
+        </div>
+        <div style="font-size:11px;color:#a0a0a0;margin-bottom:8px;">Requested by ${createdBy}</div>
+        ${previewHtml}
+        ${moreText}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;min-width:120px;">
+        <button onclick="window.approveBorrowMR('${mr.id}')" style="background:linear-gradient(135deg,#0a9b03 0%,#15c524 100%);color:white;border:none;padding:8px 10px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">
+          <i class="fa-solid fa-check"></i> Approve
+        </button>
+        <button onclick="window.rejectBorrowMR('${mr.id}')" style="background:rgba(255,107,107,0.2);color:#ff6b6b;border:1px solid rgba(255,107,107,0.4);padding:8px 10px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">
+          <i class="fa-solid fa-times"></i> Reject
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function ensureBorrowApprovalsModal() {
+  const existingModal = document.getElementById("borrowApprovalsModal");
+  const existingBackdrop = document.getElementById("borrowApprovalsBackdrop");
+  if (existingModal && existingBackdrop) return;
+
+  const backdrop = document.createElement("div");
+  backdrop.id = "borrowApprovalsBackdrop";
+  backdrop.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.58);z-index:4998;display:none;";
+  backdrop.onclick = () => window.closeBorrowApprovalsModal();
+  document.body.appendChild(backdrop);
+
+  const modal = document.createElement("div");
+  modal.id = "borrowApprovalsModal";
+  modal.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(760px,92vw);max-height:78vh;overflow:auto;background:linear-gradient(135deg,#13263f 0%,#0e1828 100%);border:1px solid rgba(255,152,0,.35);border-radius:12px;padding:16px;z-index:4999;display:none;box-shadow:0 16px 40px rgba(0,0,0,.5);";
+  modal.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h3 style="margin:0;color:#ff9800;font-size:16px;display:flex;align-items:center;gap:8px;">
+        <i class="fa-solid fa-clock"></i> Pending Borrow Approvals
+      </h3>
+      <button onclick="window.closeBorrowApprovalsModal()" style="background:none;border:none;color:#a0a0a0;font-size:20px;cursor:pointer;">&times;</button>
+    </div>
+    <p id="borrowApprovalsModalEmpty" style="color:#a0a0a0;text-align:center;margin:10px 0;display:none;">No pending borrow approvals</p>
+    <div id="borrowApprovalsModalList"></div>
+  `;
+  document.body.appendChild(modal);
+}
+
+function renderBorrowApprovals() {
+  const pendingBorrows = getPendingBorrowApprovals();
+  const toggleBtn = document.getElementById("toggleBorrowApprovalsBtn");
+  if (toggleBtn) {
+    toggleBtn.innerHTML = `<i class="fa-solid fa-clock"></i> Pending Approvals (${pendingBorrows.length})`;
+  }
+  
+  const section = document.getElementById("borrowApprovalsSection");
+  const container = document.getElementById("borrowApprovalsList");
+  const noMsg = document.getElementById("noBorrowApprovalsMsg");
+  
+  if (section) section.style.display = "none";
+  if (container) container.innerHTML = "";
+  if (noMsg) noMsg.style.display = "none";
+
+  const modalList = document.getElementById("borrowApprovalsModalList");
+  const modalEmpty = document.getElementById("borrowApprovalsModalEmpty");
+  if (!modalList || !modalEmpty) return;
+  
+  if (pendingBorrows.length === 0) {
+    modalList.innerHTML = "";
+    modalEmpty.style.display = "block";
+    return;
+  }
+  
+  modalEmpty.style.display = "none";
+  modalList.innerHTML = "";
+  
+  pendingBorrows.forEach(mr => {
+    modalList.innerHTML += buildBorrowApprovalCardHtml(mr);
+  });
+}
+
+window.approveBorrowMR = async function(mrId) {
+  const mr = allMaterialRequests.find(m => m.id === mrId);
+  if (!mr) return;
+  
+  try {
+    // Update MR status to "Approved"
+    await updateDoc(doc(db, "materialRequests", mrId), {
+      status: "Approved",
+      approvedAt: serverTimestamp(),
+      approvedBy: currentUser?.name || currentUser?.email || "Unknown"
+    });
+    
+    await logActivity("borrow_approval", "approved", `Approved borrow MR: ${mr.mrNo}`);
+    showAlert(`✅ Borrow MR ${mr.mrNo} approved!`, "success");
+    
+    await loadMaterialRequests();
+  } catch (err) {
+    console.error("Error approving borrow MR:", err);
+    showAlert("❌ Error approving MR: " + err.message, "error");
+  }
+};
+
+window.rejectBorrowMR = async function(mrId) {
+  const mr = allMaterialRequests.find(m => m.id === mrId);
+  if (!mr) return;
+  
+  try {
+    // Update MR status to "Rejected"
+    await updateDoc(doc(db, "materialRequests", mrId), {
+      status: "Rejected",
+      rejectedAt: serverTimestamp(),
+      rejectedBy: currentUser?.name || currentUser?.email || "Unknown"
+    });
+    
+    await logActivity("borrow_approval", "rejected", `Rejected borrow MR: ${mr.mrNo}`);
+    showAlert(`❌ Borrow MR ${mr.mrNo} rejected!`, "success");
+    
+    await loadMaterialRequests();
+  } catch (err) {
+    console.error("Error rejecting borrow MR:", err);
+    showAlert("❌ Error rejecting MR: " + err.message, "error");
+  }
+};
+
+window.toggleBorrowApprovalsSection = function() {
+  ensureBorrowApprovalsModal();
+  renderBorrowApprovals();
+
+  const modal = document.getElementById("borrowApprovalsModal");
+  const backdrop = document.getElementById("borrowApprovalsBackdrop");
+  if (!modal || !backdrop) return;
+
+  modal.style.display = "block";
+  backdrop.style.display = "block";
+};
+
+window.closeBorrowApprovalsModal = function() {
+  const modal = document.getElementById("borrowApprovalsModal");
+  const backdrop = document.getElementById("borrowApprovalsBackdrop");
+  if (modal) modal.style.display = "none";
+  if (backdrop) backdrop.style.display = "none";
+};
+
+window.openReceiveBorrowModal = async function(mrId) {
+  try {
+    // Get the material request document
+    const mrSnap = await getDoc(doc(db, "materialRequests", mrId));
+    if (!mrSnap.exists()) {
+      showAlert("❌ Material request not found", "error");
+      return;
+    }
+    
+    const mr = { id: mrSnap.id, ...mrSnap.data() };
+    
+    // Verify it's an approved borrow request
+    if (mr.type !== "borrow" || mr.status !== "Approved") {
+      showAlert("❌ This material request is not approved for receipt", "error");
+      return;
+    }
+    
+    // Get source and target warehouse names
+    const sourceWh = allWarehouses.find(w => w.id === mr.sourceWarehouseId);
+    const targetWh = allWarehouses.find(w => w.id === mr.borrowWarehouseId);
+    
+    const sourceName = sourceWh?.name || mr.sourceWarehouseId || "Unknown";
+    const targetName = targetWh?.name || mr.borrowWarehouseId || "Unknown";
+    
+    // Build items list
+    let itemsHTML = "";
+    if (mr.items && mr.items.length > 0) {
+      itemsHTML = `
+        <table style="width:100%;border-collapse:collapse;margin-top:15px;">
+          <thead style="border-bottom:2px solid rgba(10,155,3,.3);">
+            <tr>
+              <th style="padding:10px;text-align:left;color:#0a9b03;">Item Code</th>
+              <th style="padding:10px;text-align:left;color:#0a9b03;">Material</th>
+              <th style="padding:10px;text-align:center;color:#0a9b03;">Qty</th>
+              <th style="padding:10px;text-align:left;color:#0a9b03;">Unit</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      mr.items.forEach(item => {
+        itemsHTML += `
+          <tr style="border-bottom:1px solid rgba(10,155,3,.1);">
+            <td style="padding:10px;color:#d0d0d0;">${item.itemCode || "-"}</td>
+            <td style="padding:10px;color:#d0d0d0;">${item.materialName || "-"}</td>
+            <td style="padding:10px;text-align:center;color:#d0d0d0;font-weight:600;">${item.quantity}</td>
+            <td style="padding:10px;color:#d0d0d0;">${item.unit || "unit"}</td>
+          </tr>
+        `;
+      });
+      
+      itemsHTML += `
+          </tbody>
+        </table>
+      `;
+    }
+    
+    // Create modal
+    const backdropId = "receiveBorrowBackdrop";
+    const modalId = "receiveBorrowModal";
+    
+    // Remove old modal if exists
+    const oldBackdrop = document.getElementById(backdropId);
+    const oldModal = document.getElementById(modalId);
+    if (oldBackdrop) oldBackdrop.remove();
+    if (oldModal) oldModal.remove();
+    
+    // Create backdrop
+    const backdrop = document.createElement("div");
+    backdrop.id = backdropId;
+    backdrop.style.cssText = `
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,0.6);
+      z-index:4999;
+    `;
+    backdrop.onclick = () => {
+      backdrop.remove();
+      document.getElementById(modalId)?.remove();
+    };
+    document.body.appendChild(backdrop);
+    
+    // Create modal
+    const modal = document.createElement("div");
+    modal.id = modalId;
+    modal.style.cssText = `
+      position:fixed;
+      top:50%;
+      left:50%;
+      transform:translate(-50%,-50%);
+      background:linear-gradient(135deg,#1a3a52 0%,#0f1419 100%);
+      border:2px solid rgba(10,155,3,.4);
+      border-radius:12px;
+      padding:30px;
+      z-index:5000;
+      max-width:600px;
+      width:90%;
+      max-height:80vh;
+      overflow-y:auto;
+      color:#e0e0e0;
+      box-shadow:0 10px 40px rgba(0,0,0,0.5);
+    `;
+    
+    modal.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <h2 style="margin:0;color:#0a9b03;font-size:20px;">Receive Borrowed Materials</h2>
+        <button onclick="document.getElementById('${backdropId}').onclick()" style="background:none;border:none;color:#ff6b6b;font-size:24px;cursor:pointer;padding:0;width:30px;height:30px;">×</button>
+      </div>
+      
+      <div style="background:rgba(10,155,3,.1);padding:15px;border-radius:8px;margin-bottom:20px;border-left:4px solid #0a9b03;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+          <div>
+            <label style="color:#a0a0a0;font-size:11px;text-transform:uppercase;display:block;margin-bottom:5px;">Source Warehouse</label>
+            <div style="color:#0a9b03;font-weight:600;font-size:14px;padding:8px;background:rgba(10,155,3,.15);border-radius:4px;">${sourceName}</div>
+          </div>
+          <div>
+            <label style="color:#a0a0a0;font-size:11px;text-transform:uppercase;display:block;margin-bottom:5px;">Receiving Warehouse</label>
+            <div style="color:#0a9b03;font-weight:600;font-size:14px;padding:8px;background:rgba(10,155,3,.15);border-radius:4px;">${targetName}</div>
+          </div>
+          <div>
+            <label style="color:#a0a0a0;font-size:11px;text-transform:uppercase;display:block;margin-bottom:5px;">MR Number</label>
+            <div style="color:#d0d0d0;font-weight:600;font-size:14px;">${mr.mrNo}</div>
+          </div>
+          <div>
+            <label style="color:#a0a0a0;font-size:11px;text-transform:uppercase;display:block;margin-bottom:5px;">Date</label>
+            <div style="color:#d0d0d0;font-size:14px;">${mr.createdAt ? new Date(mr.createdAt).toLocaleDateString('en-US') : "N/A"}</div>
+          </div>
+        </div>
+      </div>
+      
+      <div>
+        <h3 style="color:#0a9b03;font-size:14px;margin:15px 0 10px;text-transform:uppercase;">📦 Items to Receive</h3>
+        ${itemsHTML}
+      </div>
+      
+      <div style="background:rgba(255,215,0,.1);padding:15px;border-radius:8px;margin-top:20px;border-left:4px solid #ffd700;">
+        <p style="color:#ffd700;font-weight:600;margin:0 0 10px;font-size:12px;">⚠️ By confirming receipt:</p>
+        <ul style="color:#d0d0d0;font-size:12px;margin:0;padding-left:20px;line-height:1.6;">
+          <li>Materials will be removed from <strong>${sourceName}</strong></li>
+          <li>Materials will be added to <strong>${targetName}</strong></li>
+          <li>A Delivery Receipt (DR) will be created</li>
+          <li>This action cannot be undone</li>
+        </ul>
+      </div>
+      
+      <div style="display:flex;gap:10px;margin-top:25px;">
+        <button onclick="document.getElementById('${backdropId}').onclick()" style="flex:1;background:rgba(160,160,160,.2);color:#a0a0a0;border:1px solid rgba(160,160,160,.4);padding:12px;border-radius:6px;cursor:pointer;font-weight:600;transition:all 0.3s;font-size:13px;" onmouseover="this.style.background='rgba(160,160,160,.3)'" onmouseout="this.style.background='rgba(160,160,160,.2)'">
+          Cancel
+        </button>
+        <button onclick="window.confirmReceiveBorrowMaterials('${mr.id}')" style="flex:1;background:#1dd1a1;color:white;border:none;padding:12px;border-radius:6px;cursor:pointer;font-weight:600;transition:all 0.3s;font-size:13px;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+          ✓ Confirm Receipt
+        </button>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+  } catch (err) {
+    console.error("Error opening receive borrow modal:", err);
+    showAlert("❌ Error loading borrow request details: " + err.message, "error");
+  }
+};
+
+window.confirmReceiveBorrowMaterials = async function(mrId) {
+  try {
+    showAlert("⏳ Processing receipt...", "success");
+    
+    // Get the material request
+    const mrSnap = await getDoc(doc(db, "materialRequests", mrId));
+    if (!mrSnap.exists()) {
+      showAlert("❌ Material request not found", "error");
+      return;
+    }
+    
+    const mr = { id: mrSnap.id, ...mrSnap.data() };
+    const sourceWarehouseId = mr.sourceWarehouseId;
+    const targetWarehouseId = mr.borrowWarehouseId;
+    
+    // For each item in the MR, deduct from source warehouse and add to target warehouse
+    if (mr.items && mr.items.length > 0) {
+      for (const mrItem of mr.items) {
+        try {
+          // Find the material in the source warehouse
+          const sourceMatSnap = await getDocs(query(
+            collection(db, "materials"),
+            where("warehouse", "==", sourceWarehouseId),
+            where("itemCode", "==", mrItem.itemCode),
+            where("material", "==", mrItem.materialName)
+          ));
+          
+          if (!sourceMatSnap.empty) {
+            const sourceMat = sourceMatSnap.docs[0];
+            const sourceData = sourceMat.data();
+            const currentQty = parseInt(sourceData.quantity || 0);
+            const newQty = Math.max(0, currentQty - mrItem.quantity);
+            
+            // Update source warehouse quantity
+            await updateDoc(sourceMat.ref, {
+              quantity: newQty
+            });
+            
+            console.log(`✓ Deducted ${mrItem.quantity} units from source warehouse (${sourceWarehouseId})`);
+            
+            // Log stock movement
+            await logStockMovement(sourceMat.id, sourceWarehouseId, "transfer_out", -mrItem.quantity, {
+              notes: `Borrowed to ${targetWarehouseId}: ${mrItem.materialName}`,
+              toWarehouse: targetWarehouseId
+            });
+          }
+          
+          // Find or create material in target warehouse
+          const targetMatSnap = await getDocs(query(
+            collection(db, "materials"),
+            where("warehouse", "==", targetWarehouseId),
+            where("itemCode", "==", mrItem.itemCode),
+            where("material", "==", mrItem.materialName)
+          ));
+          
+          if (!targetMatSnap.empty) {
+            // Material exists in target warehouse - add quantity
+            const targetMat = targetMatSnap.docs[0];
+            const targetData = targetMat.data();
+            const currentQty = parseInt(targetData.quantity || 0);
+            const newQty = currentQty + mrItem.quantity;
+            
+            await updateDoc(targetMat.ref, {
+              quantity: newQty
+            });
+            
+            console.log(`✓ Added ${mrItem.quantity} units to target warehouse (${targetWarehouseId})`);
+          } else {
+            // Material doesn't exist in target warehouse - create new record
+            // Copy the source material record to target warehouse
+            const sourceMatSnap2 = await getDocs(query(
+              collection(db, "materials"),
+              where("warehouse", "==", sourceWarehouseId),
+              where("itemCode", "==", mrItem.itemCode),
+              where("material", "==", mrItem.materialName)
+            ));
+            
+            if (!sourceMatSnap2.empty) {
+              const sourceData = sourceMatSnap2.docs[0].data();
+              
+              // Create new material record in target warehouse
+              await addDoc(collection(db, "materials"), {
+                ...sourceData,
+                warehouse: targetWarehouseId,
+                quantity: mrItem.quantity,
+                createdAt: new Date().toISOString(),
+                borrowedFrom: sourceWarehouseId,
+                borrowNote: `Borrowed from ${sourceWarehouseId}`
+              });
+              
+              console.log(`✓ Created new material record in target warehouse (${targetWarehouseId})`);
+            }
+          }
+          
+          // Log stock movement for transfer in
+          await logStockMovement(mrItem.itemCode, targetWarehouseId, "transfer_in", mrItem.quantity, {
+            notes: `Received borrow from ${sourceWarehouseId}: ${mrItem.materialName}`,
+            fromWarehouse: sourceWarehouseId
+          });
+          
+        } catch (itemErr) {
+          console.error(`Error processing item ${mrItem.materialName}:`, itemErr);
+        }
+      }
+    }
+    
+    // Create delivery receipt
+    const drNo = await getNextDRNumber();
+    const drData = {
+      drNo: drNo,
+      type: "Borrow Receipt",
+      date: new Date().toISOString(),
+      warehouse: targetWarehouseId,
+      fromWarehouse: sourceWarehouseId,
+      relatedMRId: mrId,
+      mrNo: mr.mrNo,
+      items: mr.items,
+      createdBy: currentUser?.email || "system",
+      createdAt: new Date().toISOString(),
+      status: "Received"
+    };
+    
+    const drRef = await addDoc(collection(db, "deliveryReceipts"), drData);
+    console.log(`✓ Created delivery receipt: ${drNo}`);
+    
+    // Update MR status to "Delivered"
+    await updateDoc(doc(db, "materialRequests", mrId), {
+      status: "Delivered",
+      receivedAt: new Date().toISOString(),
+      receivedBy: currentUser?.name || currentUser?.email || "Unknown",
+      deliveryReceiptId: drRef.id
+    });
+    
+    await logActivity("borrow_receipt", "received", `Received borrowed materials - MR: ${mr.mrNo}, DR: ${drNo}`);
+    
+    showAlert(`✅ Materials received successfully! DR: ${drNo}`, "success");
+    
+    // Close modal
+    const backdrop = document.getElementById("receiveBorrowBackdrop");
+    const modal = document.getElementById("receiveBorrowModal");
+    if (backdrop) backdrop.remove();
+    if (modal) modal.remove();
+    
+    // Reload MR table and summaries
+    await loadMaterialRequests();
+    await loadMaterials();
+    
+  } catch (err) {
+    console.error("Error confirming receipt:", err);
+    showAlert("❌ Error completing receipt: " + err.message, "error");
+  }
 };
 
 window.renderMRItems = function() {
@@ -4895,7 +5774,26 @@ function renderPOTable() {
   sortedPOs.forEach(po => {
     const itemsCount = po.items?.length || 0;
     const totalQty = po.items?.reduce((sum, item) => sum + parseInt(item.quantity || 0), 0) || 0;
-    const statusColor = po.status === "Pending" ? "#ff9800" : (po.status === "Ordered" ? "#2196f3" : "#0a9b03");
+    
+    // Check if any items in this PO are added to project details
+    let isTracked = false;
+    if (po.items && po.items.length > 0) {
+      const currentPoNo = (po.poNo || '').trim().toUpperCase();
+      isTracked = allProjects.some(project => {
+        if (project.items && Array.isArray(project.items)) {
+          return project.items.some(projItem => {
+            const projPoNo = (projItem.poNumber || projItem.purchaseOrderNo || projItem.poNo || '').trim().toUpperCase();
+            // Check if project item references this PO
+            return projPoNo === currentPoNo && projPoNo !== '';
+          });
+        }
+        return false;
+      });
+    }
+    
+    // Display status: "For Tracking" if added to project, "Pending" if not
+    const displayStatus = isTracked ? "For Tracking" : "Pending";
+    const statusColor = displayStatus === "For Tracking" ? "#0a9b03" : (po.status === "Ordered" ? "#2196f3" : "#ff9800");
     const mrNumbers = po.linkedMRs?.join(", ") || (po.mrNo || "N/A");
     
     const row = `
@@ -4906,7 +5804,7 @@ function renderPOTable() {
         <td style="padding:10px;color:#d0d0d0;">${itemsCount}</td>
         <td style="padding:10px;color:#d0d0d0;">${totalQty}</td>
         <td style="padding:10px;color:#d0d0d0;">${new Date(po.createdAt).toLocaleDateString()}</td>
-        <td style="padding:10px;"><span style="background:${statusColor};color:white;padding:4px 8px;border-radius:3px;font-size:11px;font-weight:600;">${po.status}</span></td>
+        <td style="padding:10px;"><span style="background:${statusColor};color:white;padding:4px 8px;border-radius:3px;font-size:11px;font-weight:600;">${displayStatus}</span></td>
         <td style="padding:10px;text-align:center;display:flex;gap:5px;justify-content:center;">
           <button style="background:#0a9b03;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;" onclick="window.viewPODetails('${po.id}')">View</button>
           <button style="background:#ff6b6b;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;" onclick="window.deletePO('${po.id}', '${po.poNo}')">Delete</button>
@@ -4987,7 +5885,7 @@ window.viewPODetails = function(poId) {
   const statusColor = po.status === "Pending" ? "#ff9800" : (po.status === "Ordered" ? "#2196f3" : "#0a9b03");
   
   const modalContent = `
-    <div style="background:#1a2332;border-radius:8px;padding:30px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;color:#e0e0e0;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+    <div style="background:#1a2332;border-radius:8px;padding:30px;max-width:1200px;width:95%;max-height:85vh;overflow-y:auto;color:#e0e0e0;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
       <h2 style="margin:0 0 20px 0;color:#0a9b03;">Purchase Order Details</h2>
       
       <div style="background:rgba(10,155,3,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:8px;padding:15px;margin-bottom:20px;">
@@ -5056,6 +5954,50 @@ async function loadDeliveries() {
     console.error("Error loading deliveries:", err);
   }
 }
+
+/**
+ * Refresh delivery receipts table - called from Purchasing module when delivery status changes
+ * This ensures the Material Processing > Delivery Receipt tab stays in sync with Purchasing
+ * @param {string} projectId - Optional specific project ID to refresh, or refresh all if not provided
+ */
+async function refreshDeliveryReceiptsSync(projectId = null) {
+  console.log('🔄 Refreshing delivery receipts sync', projectId ? `for project ${projectId}` : 'for all projects');
+  
+  // Check if delivery tab is currently visible
+  const drTabContent = document.getElementById("drTabContent");
+  if (!drTabContent || drTabContent.style.display === "none") {
+    console.log('ℹ️ Delivery Receipt tab not visible, skipping refresh');
+    return;
+  }
+  
+  try {
+    // Reload deliveries from Firebase
+    const snap = await getDocs(collection(db, "deliveries"));
+    allDeliveries = [];
+    snap.forEach(doc => {
+      allDeliveries.push({ id: doc.id, ...doc.data() });
+    });
+    
+    // Filter to specific project if provided
+    const deliveriesToRefresh = projectId 
+      ? allDeliveries.filter(d => d.warehouse === projectId)
+      : allDeliveries;
+    
+    console.log(`✅ Reloaded ${deliveriesToRefresh.length} delivery receipts from Purchasing sync`);
+    
+    // Re-render the table to show updated statuses
+    window.deliveryPaginationState.allDeliveries = allDeliveries;
+    window.deliveryPaginationState.currentPage = 1;
+    window.renderDeliveriesTableWithPagination(allDeliveries);
+    
+    console.log('✅ Delivery Receipt table synced with Purchasing module');
+  } catch (err) {
+    console.error('❌ Error refreshing delivery receipts:', err);
+  }
+}
+
+// Expose the function globally so Purchasing module can call it
+window.refreshDeliveryReceiptsSync = refreshDeliveryReceiptsSync;
 
 async function loadScheduleRecords() {
   try {
@@ -5187,6 +6129,7 @@ function renderMRTableFiltered(filteredMRs) {
   filteredMRs.forEach(mr => {
     const warehouseName = allWarehouses.find(w => w.id === mr.warehouse)?.name || mr.warehouse;
     const statusColor = mr.status === "Pending" ? "#ff9800" : "#0a9b03";
+    const mrLinkValue = mr.mrLink || mr.link || mr.materialRequestLink || "";
     
     // Handle both ISO strings and Firestore Timestamp objects
     let createdDate = "Unknown";
@@ -5208,9 +6151,11 @@ function renderMRTableFiltered(filteredMRs) {
         <td style="padding:10px;color:#d0d0d0;">${mr.type === "borrow" ? "🔄 Borrow" : "📦 New Project"}</td>
         <td style="padding:10px;color:#d0d0d0;">${mr.items?.length || 0}</td>
         <td style="padding:10px;color:#d0d0d0;">${createdDate}</td>
+        <td style="padding:10px;color:#d0d0d0;">${mrLinkValue}</td>
         <td style="padding:10px;"><span style="background:${statusColor};color:white;padding:4px 8px;border-radius:3px;font-size:11px;font-weight:600;">${mr.status}</span></td>
         <td style="padding:10px;text-align:center;display:flex;gap:5px;justify-content:center;">
           <button style="background:#0a9b03;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;" onclick="window.viewMRDetails('${mr.id}')">View</button>
+          ${mr.type === "borrow" && mr.status === "Approved" ? `<button style="background:#1dd1a1;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;" onclick="window.openReceiveBorrowModal('${mr.id}')">Receive</button>` : ""}
           <button style="background:#ff6b6b;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;" onclick="window.deleteMR('${mr.id}', '${mr.mrNo}')">Delete</button>
         </td>
       </tr>
@@ -5238,7 +6183,26 @@ function renderPOTableFiltered(filteredPOs) {
   filteredPOs.forEach(po => {
     const itemsCount = po.items?.length || 0;
     const totalQty = po.items?.reduce((sum, item) => sum + parseInt(item.quantity || 0), 0) || 0;
-    const statusColor = po.status === "Pending" ? "#ff9800" : (po.status === "Ordered" ? "#2196f3" : "#0a9b03");
+    
+    // Check if any items in this PO are added to project details
+    let isTracked = false;
+    if (po.items && po.items.length > 0) {
+      const currentPoNo = (po.poNo || '').trim().toUpperCase();
+      isTracked = allProjects.some(project => {
+        if (project.items && Array.isArray(project.items)) {
+          return project.items.some(projItem => {
+            const projPoNo = (projItem.poNumber || projItem.purchaseOrderNo || projItem.poNo || '').trim().toUpperCase();
+            // Check if project item references this PO
+            return projPoNo === currentPoNo && projPoNo !== '';
+          });
+        }
+        return false;
+      });
+    }
+    
+    // Display status: "For Tracking" if added to project, "Pending" if not
+    const displayStatus = isTracked ? "For Tracking" : "Pending";
+    const statusColor = displayStatus === "For Tracking" ? "#0a9b03" : (po.status === "Ordered" ? "#2196f3" : "#ff9800");
     
     const row = `
       <tr style="border-bottom:1px solid rgba(10,155,3,0.1);">
@@ -5247,7 +6211,7 @@ function renderPOTableFiltered(filteredPOs) {
         <td style="padding:10px;color:#d0d0d0;">${itemsCount}</td>
         <td style="padding:10px;color:#d0d0d0;">${totalQty}</td>
         <td style="padding:10px;color:#d0d0d0;">${new Date(po.createdAt).toLocaleDateString()}</td>
-        <td style="padding:10px;"><span style="background:${statusColor};color:white;padding:4px 8px;border-radius:3px;font-size:11px;font-weight:600;">${po.status}</span></td>
+        <td style="padding:10px;"><span style="background:${statusColor};color:white;padding:4px 8px;border-radius:3px;font-size:11px;font-weight:600;">${displayStatus}</span></td>
         <td style="padding:10px;text-align:center;display:flex;gap:5px;justify-content:center;">
           <button style="background:#0a9b03;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;" onclick="window.viewPODetails('${po.id}')">View</button>
           <button style="background:#ff6b6b;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;" onclick="window.deletePO('${po.id}', '${po.poNo}')">Delete</button>
@@ -5298,8 +6262,8 @@ function renderDeliveriesTable() {
   
   // Ensure we have columns, use defaults if needed
   let cols = deliveryColumns && deliveryColumns.length > 0 ? deliveryColumns : [
-    { name: "Date" }, { name: "Warehouse" }, { name: "Control No" }, 
-    { name: "Client PO" }, { name: "Items Count" }, { name: "Type" }, { name: "Status" }
+    { name: "Date" }, { name: "Project" }, { name: "Control No" }, 
+    { name: "Client PO" }, { name: "Items Count" }, { name: "Type" }, { name: "DR Link" }, { name: "Status" }
   ];
   
   // Make sure Status column exists
@@ -5333,24 +6297,38 @@ function renderDeliveriesTable() {
       
       cols.forEach(col => {
         let cellValue = "-";
-        let cellStyle = "padding:12px;border-bottom:1px solid rgba(10,155,3,.1);color:#d0d0d0;font-size:12px;";
+        const colName = col.name || "";
+        let cellStyle = "padding:10px 12px;border-bottom:1px solid rgba(10,155,3,.1);color:#d0d0d0;font-size:12px;vertical-align:middle;white-space:nowrap;";
         
         // Use field property if available, fallback to name-based matching
         const field = col.field || col.name;
         
-        if (field === 'date' || col.name === 'Date') {
+        if (field === 'date' || colName === 'Date') {
+          cellStyle += "min-width:110px;";
           cellValue = delivery.date || "-";
-        } else if (field === 'warehouse' || col.name === 'Warehouse') {
-          cellValue = allWarehouses?.find(w => w.id === delivery.warehouse)?.name || delivery.warehouse || "-";
-        } else if (field === 'controlNo' || col.name === 'Control No') {
+        } else if (field === 'warehouse' || colName === 'Warehouse' || colName === 'Project') {
+          cellStyle += "min-width:260px;max-width:300px;overflow:hidden;text-overflow:ellipsis;";
+          // First try to find project, then fallback to warehouse
+          cellValue = allProjects?.find(p => p.id === delivery.warehouse)?.projectName || 
+                     allWarehouses?.find(w => w.id === delivery.warehouse)?.name || 
+                     delivery.warehouse || "-";
+        } else if (field === 'controlNo' || colName === 'Control No') {
+          cellStyle += "min-width:170px;";
           cellValue = delivery.controlNo || "-";
-        } else if (field === 'clientPO' || col.name === 'Client PO') {
+        } else if (field === 'clientPO' || colName === 'Client PO') {
+          cellStyle += "min-width:100px;";
           cellValue = delivery.clientPO || "-";
-        } else if (field === 'itemsCount' || col.name === 'Items Count') {
+        } else if (field === 'itemsCount' || colName === 'Items Count') {
+          cellStyle += "min-width:95px;";
           cellValue = delivery.itemsCount || 0;
-        } else if (field === 'type' || col.name === 'Type') {
+        } else if (field === 'type' || colName === 'Type') {
+          cellStyle += "min-width:95px;";
           cellValue = delivery.type || (delivery.fromWarehouse ? "Transfer" : "Stock In");
-        } else if (field === 'status' || col.name === 'Status') {
+        } else if (field === 'drLink' || colName === 'DR Link') {
+          cellStyle += "min-width:90px;text-align:center;";
+          cellValue = delivery.drLink || delivery.deliveryLink || delivery.link || "";
+        } else if (field === 'status' || colName === 'Status') {
+          cellStyle += "min-width:165px;";
           cellValue = deliveryStatusMap[delivery.id] || "Fetching...";
           cellStyle += "font-weight:600;";
           
@@ -5369,7 +6347,7 @@ function renderDeliveriesTable() {
         row += `<td style="${cellStyle}">${cellValue}</td>`;
       });
       
-      row += `<td style="padding:12px;text-align:center;border-bottom:1px solid rgba(10,155,3,.1);">
+      row += `<td style="padding:10px 12px;text-align:center;border-bottom:1px solid rgba(10,155,3,.1);white-space:nowrap;min-width:180px;">
         <button class="btn-edit" onclick="editDelivery('${delivery.id}')">View</button>
         <button class="btn-delete" onclick="deleteDelivery('${delivery.id}')" style="margin-left:4px;">Delete</button>
       </td></tr>`;
@@ -5394,7 +6372,7 @@ window.viewDeliveryReceipt = async (id) => {
   modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);backdrop-filter:blur(3px);z-index:2000;display:flex;align-items:center;justify-content:center;';
   
   const content = document.createElement('div');
-  content.style.cssText = 'background:#1a3a52;border:2px solid rgba(10,155,3,0.5);border-radius:8px;padding:30px;width:95%;max-width:1000px;max-height:85vh;overflow-y:auto;box-shadow:0 10px 40px rgba(0,0,0,0.4);';
+  content.style.cssText = 'background:#1a2332;border-radius:8px;padding:30px;width:95%;max-width:1200px;max-height:85vh;overflow-y:auto;color:#e0e0e0;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
   
   const title = document.createElement('h3');
   title.textContent = '📋 Delivery Receipt - ' + (delivery.controlNo || 'N/A');
@@ -5427,31 +6405,22 @@ window.viewDeliveryReceipt = async (id) => {
       <strong style="color:#0a9b03;font-size:11px;">PROJECT</strong><br><span style="color:#e0e0e0;font-size:14px;">${projectName}</span>
     </div>
     <div style="background:rgba(10,155,3,0.1);padding:12px;border-radius:6px;border-left:3px solid ${statusColor};">
-      <strong style="color:#0a9b03;font-size:11px;">DELIVERY STATUS (from PO)</strong><br><span style="color:${statusColor};font-size:14px;font-weight:600;">${linkedDeliveryStatus}</span>
-    </div>
-  `;
-  content.appendChild(headerInfo);
-  headerInfo.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-bottom:25px;';
-  headerInfo.innerHTML = `
-    <div style="background:rgba(10,155,3,0.1);padding:12px;border-radius:6px;border-left:3px solid #0a9b03;">
-      <strong style="color:#0a9b03;font-size:11px;">DATE</strong><br><span style="color:#e0e0e0;font-size:14px;">${delivery.date || '-'}</span>
-    </div>
-    <div style="background:rgba(10,155,3,0.1);padding:12px;border-radius:6px;border-left:3px solid #0a9b03;">
-      <strong style="color:#0a9b03;font-size:11px;">PROJECT</strong><br><span style="color:#e0e0e0;font-size:14px;">${projectName}</span>
-    </div>
-    <div style="background:rgba(10,155,3,0.1);padding:12px;border-radius:6px;border-left:3px solid #0a9b03;">
-      <strong style="color:#0a9b03;font-size:11px;">STATUS</strong><br><span style="color:#e0e0e0;font-size:14px;">${delivery.status || 'Received'}</span>
+      <strong style="color:#0a9b03;font-size:11px;">OVERALL STATUS (from PO)</strong><br><span style="color:${statusColor};font-size:14px;font-weight:600;">${linkedDeliveryStatus}</span>
     </div>
   `;
   content.appendChild(headerInfo);
   
-  // Items table with relevant columns
+  // Fetch per-material delivery status from Purchasing module (CALCULATED FROM QUANTITIES)
+  const materialStatusMap = await getDeliveryStatusByMaterial(delivery);
+  console.log('📋 Modal: Material status map:', materialStatusMap);
+  
+  // Items table with relevant columns including per-material status
   const table = document.createElement('table');
   table.style.cssText = 'width:100%;border-collapse:collapse;margin-bottom:20px;';
   
   const headerRow = table.insertRow();
   headerRow.style.cssText = 'background:rgba(10,155,3,0.2);';
-  const headers = ['Item Code', 'Material', 'Specification', 'Brand', 'Received Qty', 'Unit', 'MR No', 'PO No'];
+  const headers = ['Item Code', 'Material', 'Specification', 'Brand', 'Received Qty', 'Unit', 'MR No', 'PO No', 'PO Delivery Status'];
   headers.forEach(headerText => {
     const th = document.createElement('th');
     th.textContent = headerText;
@@ -5465,6 +6434,18 @@ window.viewDeliveryReceipt = async (id) => {
       row.style.cssText = 'border-bottom:1px solid rgba(10,155,3,0.2);';
       if (idx % 2 === 0) {
         row.style.backgroundColor = 'rgba(10,155,3,0.05)';
+      }
+      
+      // Get delivery status for this material
+      const materialKey = (item.materialName || item.material || '').toLowerCase().trim();
+      const materialStatus = materialStatusMap[materialKey] || 'NOT FOUND';
+      let poStatusColor = '#e0e0e0';
+      if (materialStatus === 'FULLY RECEIVED') {
+        poStatusColor = '#0a9b03';
+      } else if (materialStatus === 'PARTIALLY RECEIVED') {
+        poStatusColor = '#ffa500';
+      } else if (materialStatus === 'PENDING') {
+        poStatusColor = '#ff1744';
       }
       
       const cells = [
@@ -5484,22 +6465,32 @@ window.viewDeliveryReceipt = async (id) => {
         td.style.cssText = 'color:#d0d0d0;padding:10px 12px;font-size:13px;';
         row.appendChild(td);
       });
+      
+      // Add PO Delivery Status cell
+      const statusCell = document.createElement('td');
+      statusCell.textContent = materialStatus;
+      statusCell.style.cssText = `color:${poStatusColor};padding:10px 12px;font-size:13px;font-weight:600;`;
+      row.appendChild(statusCell);
     });
   } else {
     const emptyRow = table.insertRow();
     const emptyCell = emptyRow.insertCell();
-    emptyCell.colSpan = 8;
+    emptyCell.colSpan = 9;
     emptyCell.textContent = 'No items';
     emptyCell.style.cssText = 'padding:20px;text-align:center;color:#a0a0a0;';
   }
   
   content.appendChild(table);
   
+  const btnContainer = document.createElement('div');
+  btnContainer.style.cssText = 'display:flex;justify-content:flex-end;margin-top:20px;';
+  
   const closeBtn = document.createElement('button');
   closeBtn.textContent = 'Close';
-  closeBtn.style.cssText = 'width:100%;padding:12px;background:rgba(10,155,3,0.2);color:#0a9b03;border:1px solid rgba(10,155,3,0.3);border-radius:6px;cursor:pointer;font-weight:600;';
+  closeBtn.style.cssText = 'background:rgba(10,155,3,0.2);color:#0a9b03;border:1px solid rgba(10,155,3,0.4);padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;';
   closeBtn.onclick = () => modal.remove();
-  content.appendChild(closeBtn);
+  btnContainer.appendChild(closeBtn);
+  content.appendChild(btnContainer);
   
   modal.appendChild(content);
   document.body.appendChild(modal);
@@ -5520,7 +6511,7 @@ window.editDeliveryControlNo = (id) => {
   modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);backdrop-filter:blur(3px);z-index:2000;display:flex;align-items:center;justify-content:center;';
   
   const content = document.createElement('div');
-  content.style.cssText = 'background:#1a3a52;border:2px solid rgba(10,155,3,0.5);border-radius:8px;padding:30px;width:90%;max-width:500px;box-shadow:0 10px 40px rgba(0,0,0,0.4);';
+  content.style.cssText = 'background:#1a2332;border-radius:8px;padding:30px;width:95%;max-width:600px;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
   
   const title = document.createElement('h3');
   title.textContent = '✏️ Edit Control Number';
@@ -5569,7 +6560,7 @@ window.editDeliveryControlNo = (id) => {
   
   const cancelBtn = document.createElement('button');
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.style.cssText = 'flex:1;padding:12px;background:rgba(255,255,255,0.1);color:#e0e0e0;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;font-weight:600;';
+  cancelBtn.style.cssText = 'flex:1;padding:12px;background:rgba(10,155,3,0.2);color:#0a9b03;border:1px solid rgba(10,155,3,0.4);border-radius:6px;cursor:pointer;font-weight:600;';
   cancelBtn.onclick = () => modal.remove();
   
   btnDiv.appendChild(saveBtn);
@@ -5822,6 +6813,7 @@ window.stockInDelivery = async (id) => {
         // Update existing material quantity
         const currentQty = parseInt(existingMaterial.quantity || 0);
         const newQty = currentQty + parseInt(drItem.quantity || 0);
+        const quantityAdded = parseInt(drItem.quantity || 0);
         
         // Calculate update fields
         const updateFields = {
@@ -5869,6 +6861,11 @@ window.stockInDelivery = async (id) => {
         }
         
         await updateDoc(doc(db, "materials", existingMaterial.id), updateFields);
+        
+        // 🔧 NEW: Create stock movement for tracking in monthly report
+        await logStockMovement(existingMaterial.id, warehouseId, "in", quantityAdded, {
+          notes: `Stock received from Delivery: ${currentQty} → ${newQty} units (Added: +${quantityAdded})`
+        });
         
         console.log(`✅ Updated quantity for ${itemCode} (${drItem.materialName}): ${currentQty} → ${newQty}`);
       } else {
@@ -5934,6 +6931,12 @@ window.stockInDelivery = async (id) => {
         };
 
         const materialRef = await addDoc(collection(db, "materials"), newMaterial);
+        
+        // 🔧 NEW: Create stock movement for tracking in monthly report
+        await logStockMovement(materialRef.id, warehouseId, "in", parseInt(drItem.quantity || 0), {
+          notes: `Stock received from Delivery: +${drItem.quantity} units`
+        });
+        
         console.log(`✅ Created new material: ${itemCode} (${drItem.materialName}) - DocID: ${materialRef.id} - Stock In: ${stockInDate.toLocaleDateString()}, Expiry: ${expiryDate.toLocaleDateString()}, Near Expiry Threshold: ${nearExpiryThresholdDate.toLocaleDateString()}, Status: ${initialStatus}`);
       }
 
@@ -6062,6 +7065,23 @@ async function updateStockAfterDelivery(delivery) {
         delete newMaterial.id;
         await addDoc(collection(db, "materials"), newMaterial);
       }
+
+      // CREATE STOCK MOVEMENT ENTRY for monthly report
+      // This is critical - monthly report uses stock_movements to show what entered/left
+      const movementType = isTransfer ? "transfer-in" : "in";
+      const movementData = {
+        materialId: item.materialId,
+        warehouseId: toWarehouseId,
+        type: movementType,
+        quantity: qty,
+        date: delivery.date || new Date().toISOString(),
+        details: isTransfer ? `Transfer from ${fromWarehouseId}` : `Delivery Receipt - ${delivery.controlNo || 'Stock In'}`,
+        createdAt: new Date().toISOString(),
+        createdBy: delivery.createdBy || "system"
+      };
+      
+      await addDoc(collection(db, "stock_movements"), movementData);
+      console.log('✅ Stock movement created for monthly report:', movementData);
     }
     
     // Update daily stock chart data
@@ -6074,7 +7094,7 @@ async function updateStockAfterDelivery(delivery) {
     // Reload data
     await loadMaterials();
     updateWeeklyStockChart();
-    updateWarehouseChart();
+    updateProjectDistributionChart();
     
   } catch (err) {
     console.error("Error updating stock:", err);
@@ -6419,25 +7439,32 @@ window.displayDeliveryPage = function() {
       
       // Use default columns if deliveryColumns is empty
       const cols = deliveryColumns && deliveryColumns.length > 0 ? deliveryColumns : [
-        { name: "Date" }, { name: "Warehouse" }, { name: "Control No" }, 
-        { name: "Client PO" }, { name: "Items Count" }, { name: "Type" }, { name: "Status" }
+        { name: "Date" }, { name: "Project" }, { name: "Control No" }, 
+        { name: "Client PO" }, { name: "Items Count" }, { name: "Type" }, { name: "DR Link" }, { name: "Status" }
       ];
       
       cols.forEach(col => {
         let cellContent = "-";
-        let cellStyle = "padding:12px;border-bottom:1px solid rgba(10,155,3,.1);color:#d0d0d0;";
+        const colName = col.name || "";
+        let cellStyle = "padding:10px 12px;border-bottom:1px solid rgba(10,155,3,.1);color:#d0d0d0;font-size:12px;vertical-align:middle;white-space:nowrap;";
         
-        if (col.name === 'Date') {
+        if (colName === 'Date') {
+          cellStyle += "min-width:110px;";
           cellContent = delivery.date || "-";
-        } else if (col.name === 'Warehouse' || col.name === 'Project') {
+        } else if (colName === 'Warehouse' || colName === 'Project') {
+          cellStyle += "min-width:260px;max-width:300px;overflow:hidden;text-overflow:ellipsis;";
           cellContent = allWarehouses?.find(w => w.id === delivery.warehouse)?.name || allProjects?.find(p => p.id === delivery.warehouse)?.projectName || delivery.warehouse || "-";
-        } else if (col.name === 'Control No') {
+        } else if (colName === 'Control No') {
+          cellStyle += "min-width:170px;";
           cellContent = delivery.controlNo || "-";
-        } else if (col.name === 'Client PO') {
+        } else if (colName === 'Client PO') {
+          cellStyle += "min-width:100px;";
           cellContent = delivery.clientPO || "-";
-        } else if (col.name === 'Items Count') {
+        } else if (colName === 'Items Count') {
+          cellStyle += "min-width:95px;";
           cellContent = delivery.itemsCount || 0;
-        } else if (col.name === 'Type') {
+        } else if (colName === 'Type') {
+          cellStyle += "min-width:95px;";
           // Check if already stocked in
           const isStockedIn = delivery.status === "Stocked In";
           const buttonStyle = isStockedIn 
@@ -6448,7 +7475,11 @@ window.displayDeliveryPage = function() {
           cellContent = `<button ${buttonClick} style="${buttonStyle}">${buttonText}</button>`;
           row += `<td style="${cellStyle}">${cellContent}</td>`;
           return;  // Skip the default cell rendering for this column
-        } else if (col.name === 'Status') {
+        } else if (colName === 'DR Link') {
+          cellStyle += "min-width:90px;text-align:center;";
+          cellContent = delivery.drLink || delivery.deliveryLink || delivery.link || "";
+        } else if (colName === 'Status') {
+          cellStyle += "min-width:165px;";
           cellContent = deliveryStatusMap[delivery.id] || "Fetching...";
           cellStyle += "font-weight:600;";
           
@@ -6467,7 +7498,7 @@ window.displayDeliveryPage = function() {
         row += `<td style="${cellStyle}">${cellContent}</td>`;
       });
       
-      row += `<td style="padding:12px;text-align:center;border-bottom:1px solid rgba(10,155,3,.1);">
+      row += `<td style="padding:10px 12px;text-align:center;border-bottom:1px solid rgba(10,155,3,.1);white-space:nowrap;min-width:180px;">
         <button class="btn-edit" onclick="viewDeliveryReceipt('${delivery.id}')" style="padding:6px 10px;background:#0a9b03;color:white;border:none;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;">View</button>
         <button class="btn-edit" onclick="editDeliveryControlNo('${delivery.id}')" style="padding:6px 10px;background:#1976d2;color:white;border:none;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;margin-left:4px;">Edit</button>
         <button class="btn-delete" onclick="deleteDelivery('${delivery.id}')" style="padding:6px 10px;background:#d32f2f;color:white;border:none;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;margin-left:4px;">Delete</button>
@@ -6803,8 +7834,6 @@ window.updateActivityFilters = function(activities) {
   }
 }
 
-
-
 // ==================== DOM CONTENT LOADED ====================
 document.addEventListener("DOMContentLoaded", () => {
   const menuBtn = document.getElementById("menuBtn");
@@ -6820,18 +7849,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }, true); // Use capture phase to ensure this fires first
   }
 
-  // Handle navigation from admin panel
-  const navigateToWarehouse = sessionStorage.getItem('navigateToWarehouse');
-  const filterUserStatus = sessionStorage.getItem('filterUserStatus');
-  
-  if (navigateToWarehouse === 'true') {
-    sessionStorage.removeItem('navigateToWarehouse');
+  // Handle hash-based navigation
+  if (window.location.hash === '#warehouse') {
     setTimeout(() => {
-      // Navigate to Settings page and show Warehouse tab
-      const settingsLink = document.querySelector('[data-page="settings"]');
-      if (settingsLink) {
-        settingsLink.click();
-        window.switchSettingsTab('warehouse');
+      const warehouseLink = document.querySelector('[data-page="warehouse"]');
+      if (warehouseLink) {
+        warehouseLink.click();
       }
     }, 500);
   }
@@ -6849,7 +7872,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   document.querySelectorAll(".nav-link").forEach(link => {
-    link.onclick = (e) => {
+    link.onclick = async (e) => {
       e.preventDefault();
       document.querySelectorAll(".nav-link").forEach(x => x.classList.remove("active"));
       link.classList.add("active");
@@ -6880,8 +7903,8 @@ document.addEventListener("DOMContentLoaded", () => {
         updateMaterialSummaries("all");
       }
       if (link.dataset.page === "materials") {
-        renderMaterials2("all");
-        updateMaterialSummaries2();
+        await renderMaterials2("all");
+        await updateMaterialSummaries2();
       }
       if (link.dataset.page === "delivery-receipt") {
         loadDeliveryColumns();
@@ -6940,13 +7963,13 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       let userData = null;
       
-      // Check admin_users collection first
-      let userSnap = await getDoc(doc(db, "admin_users", user.uid));
+      // Check warehouse_users first to avoid admin record overriding warehouse role
+      let userSnap = await getDoc(doc(db, "warehouse_users", user.uid));
       if (userSnap.exists()) {
         userData = userSnap.data();
       } else {
         // Then check other collections
-        const collections = ["inventory_users", "warehouse_users", "purchasing_users", "attendance_users"];
+        const collections = ["inventory_users", "purchasing_users", "attendance_users", "finance_users", "admin_users"];
         for (const collName of collections) {
           try {
             userSnap = await getDoc(doc(db, collName, user.uid));
@@ -6960,10 +7983,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
       
+      // If no user data found in any collection, allow access anyway (let permissions control actions)
       if (!userData) {
-        window.location.href = "login.html";
-        return;
+        console.log("User not in any module collection, setting minimal data");
+        userData = { role: "guest", email: user.email };
       }
+      currentUser = { id: user.uid, ...userData };
+      
+      // Load permissions for action-based access control
+      await loadUserPermissions(user.uid);
+      
       currentUser = { id: user.uid, ...userData };
       const roleEl = document.getElementById("currentUserRole");
       if (roleEl) {
@@ -6985,14 +8014,24 @@ document.addEventListener("DOMContentLoaded", () => {
       startMidnightStockUpdate();
       
       // Load materials and update dashboard summary on page load
-      await loadMaterials();
-      updateMaterialSummaries("all");
+      try {
+        await loadMaterials();
+        updateMaterialSummaries("all");
+      } catch (e) {
+        console.warn("Error loading materials:", e);
+      }
+      
       // preload warehouse/project data so settings page renders instantly
-      await loadWarehouses();
-      await loadProjects();
+      try {
+        await loadWarehouses();
+        await loadProjects();
+      } catch (e) {
+        console.warn("Error preloading warehouse/project data:", e);
+      }
     } catch (e) {
-      console.error("auth error:", e);
-      window.location.href = "login.html";
+      console.error("Error during dashboard initialization:", e);
+      // Don't redirect to login - user is authenticated, might just be data loading issues
+      // Let page load with whatever data is available
     }
   });
 
@@ -7029,8 +8068,6 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("profileRole").textContent = userRole.toUpperCase();
     document.getElementById("profileEmail").textContent = userEmail;
     document.getElementById("profileRoleFull").textContent = roleMap[userRole] || userRole;
-    document.getElementById("profileDepartment").textContent = userDepartment;
-    document.getElementById("profileTagging").textContent = userTagging;
     
     const statusEl = document.getElementById("profileStatus");
     if (statusEl) {
@@ -7180,6 +8217,15 @@ document.addEventListener("DOMContentLoaded", () => {
       
       const isStockMonitoringTab = !usingMaterialColumns2;
       
+      // 🔐 Permission check for Stock Monitoring operations
+      if (isStockMonitoringTab) {
+        const requiredAction = editingMaterialId ? 'edit' : 'create';
+        if (!checkUserPermission('inventory', requiredAction)) {
+          alert(getPermissionErrorMessage('inventory', requiredAction));
+          return;
+        }
+      }
+      
       // For Stock Monitoring, validate material selection and save with quantity
       if (isStockMonitoringTab) {
         // Get selected material ID from hidden field OR directly from dropdown as fallback
@@ -7326,16 +8372,26 @@ document.addEventListener("DOMContentLoaded", () => {
           await updateDoc(doc(db, "materials", targetMaterialId), updateData);
           
           // Log stock movement
-          const movementType = editingMaterialId ? "adjustment" : "add";
+          // 🔧 IMPROVED: Track quantity reductions as "out" (stock used by site)
+          let movementType = editingMaterialId ? "adjustment" : "add";
           const warehouseName = allWarehouses.find(w => w.id === warehouse)?.name || warehouse;
           
-          await logStockMovement(selectedMaterialId, warehouse, movementType, quantityChange, {
-            notes: `${movementType === "add" ? "Added" : "Adjusted"} stock: ${databaseQuantity} → ${newQuantity} units in ${warehouseName}`
+          // If editing and quantity DECREASED, track as "out" (site using material)
+          // If editing and quantity INCREASED, track as "in" (more stock received)
+          if (editingMaterialId && quantityChange < 0) {
+            movementType = "out";  // Stock was removed/used by site
+          } else if (editingMaterialId && quantityChange > 0) {
+            movementType = "in";   // Stock was added/received
+          }
+          
+          await logStockMovement(selectedMaterialId, warehouse, movementType, Math.abs(quantityChange), {
+            notes: `${movementType === "add" ? "Added" : movementType === "out" ? "Used/Removed" : movementType === "in" ? "Received" : "Adjusted"} stock: ${databaseQuantity} → ${newQuantity} units in ${warehouseName}`
           });
           
           // Log detailed activity with all stock information
           if (editingMaterialId) {
-            await logActivity("material", "edit_stock", `EDITED Stock - Material: ${materialName}, Warehouse: ${warehouseName}, Previous Qty: ${databaseQuantity}, New Qty: ${newQuantity}, Change: ${quantityChange > 0 ? '+' : ''}${quantityChange} units`);
+            const action = quantityChange < 0 ? "USED" : quantityChange > 0 ? "RECEIVED" : "ADJUSTED";
+            await logActivity("material", "edit_stock", `${action} Stock - Material: ${materialName}, Warehouse: ${warehouseName}, Previous Qty: ${databaseQuantity}, New Qty: ${newQuantity}, Change: ${quantityChange > 0 ? '+' : ''}${quantityChange} units`);
           } else {
             await logActivity("material", "add_stock", `ADDED Stock - Material: ${materialName}, Warehouse: ${warehouseName}, Quantity Added: +${quantity} units, Total: ${newQuantity} units`);
           }
@@ -7503,8 +8559,8 @@ document.addEventListener("DOMContentLoaded", () => {
           materialModal.style.display = "none";
           await loadMaterials();
           // Render with currently selected category
-          renderMaterials2(selectedCategory);
-          updateMaterialSummaries2();
+          await renderMaterials2(selectedCategory);
+          await updateMaterialSummaries2();
         } catch (err) {
           showAlert("Error saving material: " + err.message, "error");
         }
@@ -8019,6 +9075,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (document.getElementById("addMRBtn")) {
     document.getElementById("addMRBtn").onclick = () => {
+      // Check permission to create
+      if (!checkUserPermission('inventory', 'create')) {
+        alert(getPermissionErrorMessage('inventory', 'create'));
+        return;
+      }
       document.getElementById("mrModalTitle").textContent = "Create Material Request";
       document.getElementById("mrForm").reset();
       document.getElementById("mrType").value = "new-project";
@@ -8042,75 +9103,134 @@ document.addEventListener("DOMContentLoaded", () => {
       // Setup searchable material dropdown
       const materialInput = document.getElementById("mrAddMaterialSelect");
       const materialDropdown = document.getElementById("mrMaterialDropdown");
-      
-      materialInput.value = "";
-      materialInput.oninput = function() {
-        const searchText = this.value.toLowerCase();
+      const qtyInput = document.getElementById("mrAddQty");
+
+      const parseMaterialQuantity = (material) => {
+        const qty = parseFloat(material?.quantity ?? material?.qty ?? 0);
+        return Number.isFinite(qty) && qty > 0 ? qty : 0;
+      };
+
+      const clearMaterialSelection = () => {
+        materialInput.value = "";
+        materialInput.dataset.selectedId = "";
+        materialInput.dataset.selectedMat = "";
+        materialInput.dataset.availableQty = "";
+        if (qtyInput) {
+          qtyInput.value = "";
+          qtyInput.removeAttribute("max");
+        }
+        materialDropdown.style.display = "none";
+      };
+
+      const getBorrowSourceWarehouse = () => {
+        const borrowSelectEl = document.getElementById("mrBorrowFromWarehouse");
+        return borrowSelectEl ? borrowSelectEl.value : "";
+      };
+
+      const isBorrowRequest = () => {
+        const typeSelect = document.getElementById("mrType");
+        return typeSelect && typeSelect.value === "borrow";
+      };
+
+      const getAvailableMaterialsForRequest = () => {
+        let sourceMaterials = allMaterials || [];
+
+        if (isBorrowRequest()) {
+          const sourceWarehouse = getBorrowSourceWarehouse();
+          if (!sourceWarehouse) return [];
+          sourceMaterials = sourceMaterials.filter((mat) => mat.warehouse === sourceWarehouse);
+        }
+
+        sourceMaterials = sourceMaterials.filter((mat) => parseMaterialQuantity(mat) > 0);
+
+        const materialMap = new Map();
+
+        sourceMaterials.forEach((mat) => {
+          const matName = mat.material || mat.materialName || mat.name || "";
+          const itemCode = mat.itemCode || mat.code || "";
+          const spec = mat.specification || mat.specs || "-";
+          const brand = mat.brand || "-";
+          const unit = mat.unit || "PCS";
+          const key = `${itemCode}__${matName}__${spec}__${brand}__${unit}`.toLowerCase();
+          const qty = parseMaterialQuantity(mat);
+
+          if (!materialMap.has(key)) {
+            materialMap.set(key, {
+              id: mat.id,
+              material: matName,
+              itemCode,
+              specification: spec,
+              brand,
+              unit,
+              supplierprices: mat.supplierprices,
+              supplier: mat.supplier,
+              cost: mat.cost || mat.unitPrice || mat.price || 0,
+              availableQty: qty,
+            });
+            return;
+          }
+
+          const existing = materialMap.get(key);
+          existing.availableQty += qty;
+          if (!existing.id && mat.id) existing.id = mat.id;
+          materialMap.set(key, existing);
+        });
+
+        return Array.from(materialMap.values());
+      };
+
+      const renderMaterialSuggestions = (searchTextRaw) => {
+        const searchText = (searchTextRaw || "").toLowerCase().trim();
         materialDropdown.innerHTML = "";
-        
-        if (searchText.length === 0) {
-          materialDropdown.style.display = "none";
+
+        if (isBorrowRequest() && !getBorrowSourceWarehouse()) {
+          materialDropdown.innerHTML = `<div style="padding:10px;color:#a0a0a0;text-align:center;font-size:12px;">Select "Borrow From Warehouse" first</div>`;
+          materialDropdown.style.display = "block";
           return;
         }
-        
-        const filtered = (allMaterials || []).filter(mat => {
-          const matName = (mat.material || mat.materialName || mat.name || "").toLowerCase();
-          const itemCode = (mat.itemCode || mat.code || "").toLowerCase();
-          const spec = (mat.specification || mat.specs || "").toLowerCase();
-          const brand = (mat.brand || "").toLowerCase();
-          return matName.includes(searchText) || itemCode.includes(searchText) || spec.includes(searchText) || brand.includes(searchText);
-        }).sort((a, b) => {
-          // Sort by relevance: prioritize exact prefix matches
-          const aItemCode = (a.itemCode || a.code || "").toLowerCase();
-          const bItemCode = (b.itemCode || b.code || "").toLowerCase();
-          const aMatName = (a.material || a.materialName || a.name || "").toLowerCase();
-          const bMatName = (b.material || b.materialName || b.name || "").toLowerCase();
-          
-          // Priority 1: Item Code starts with search text (best match)
+
+        const availableMaterials = getAvailableMaterialsForRequest();
+
+        const filtered = (searchText
+          ? availableMaterials.filter(mat => {
+              const matName = (mat.material || "").toLowerCase();
+              const itemCode = (mat.itemCode || "").toLowerCase();
+              const spec = (mat.specification || "").toLowerCase();
+              const brand = (mat.brand || "").toLowerCase();
+              return matName.includes(searchText) || itemCode.includes(searchText) || spec.includes(searchText) || brand.includes(searchText);
+            })
+          : availableMaterials
+        ).sort((a, b) => {
+          const aItemCode = (a.itemCode || "").toLowerCase();
+          const bItemCode = (b.itemCode || "").toLowerCase();
+          const aMatName = (a.material || "").toLowerCase();
+          const bMatName = (b.material || "").toLowerCase();
+
           const aItemCodePrefix = aItemCode.startsWith(searchText) ? 0 : 1;
           const bItemCodePrefix = bItemCode.startsWith(searchText) ? 0 : 1;
           if (aItemCodePrefix !== bItemCodePrefix) return aItemCodePrefix - bItemCodePrefix;
-          
-          // Priority 2: Material Name starts with search text
+
           const aMatNamePrefix = aMatName.startsWith(searchText) ? 0 : 1;
           const bMatNamePrefix = bMatName.startsWith(searchText) ? 0 : 1;
           if (aMatNamePrefix !== bMatNamePrefix) return aMatNamePrefix - bMatNamePrefix;
-          
-          // Priority 3: Item code position in string (earlier position = better)
+
           const aItemCodePos = aItemCode.indexOf(searchText);
           const bItemCodePos = bItemCode.indexOf(searchText);
           if (aItemCodePos !== bItemCodePos) return aItemCodePos - bItemCodePos;
-          
-          // Default: sort by item code alphabetically
+
           return aItemCode.localeCompare(bItemCode);
         });
-        
-        // 🔍 DEDUPLICATE: Show only unique materials (by itemCode + material name), not warehouse copies
-        const seenMaterials = new Map();
-        const uniqueFiltered = filtered.filter(mat => {
-          const matName = mat.material || mat.materialName || mat.name || "";
-          const itemCode = mat.itemCode || mat.code || "";
-          const uniqueKey = `${itemCode}_${matName}`;
-          
-          if (seenMaterials.has(uniqueKey)) {
-            return false; // Skip duplicate
-          }
-          seenMaterials.set(uniqueKey, true);
-          return true;
-        });
-        
-        if (uniqueFiltered.length > 0) {
-          uniqueFiltered.slice(0, 20).forEach(mat => {
-            const matName = mat.material || mat.materialName || mat.name;
-            const itemCode = mat.itemCode || mat.code || "";
-            const spec = mat.specification || mat.specs || "-";
+
+        if (filtered.length > 0) {
+          filtered.forEach(mat => {
+            const matName = mat.material;
+            const itemCode = mat.itemCode || "";
+            const spec = mat.specification || "-";
             const brand = mat.brand || "-";
-            
-            // 💰 Extract price from multiple sources (supplierprices JSON, cost field, unitPrice, or price)
+
             let bestSupplier = "-";
             let bestPrice = 0;
-            
-            // First, try to get from supplierprices JSON
+
             if (mat.supplierprices) {
               try {
                 const prices = JSON.parse(mat.supplierprices);
@@ -8118,7 +9238,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (suppliers.length > 0) {
                   bestSupplier = suppliers[0];
                   bestPrice = parseFloat(prices[bestSupplier]) || 0;
-                  // Find lowest price
                   suppliers.forEach(sup => {
                     const price = parseFloat(prices[sup]) || 0;
                     if (price > 0 && (bestPrice === 0 || price < bestPrice)) {
@@ -8131,53 +9250,74 @@ document.addEventListener("DOMContentLoaded", () => {
                 console.log("⚠️ Error parsing supplierprices for", matName, e);
               }
             }
-            
-            // If no price found from supplierprices, try direct cost/price fields
+
             if (bestPrice === 0) {
-              bestPrice = parseFloat(mat.cost || mat.unitPrice || mat.price || 0) || 0;
+              bestPrice = parseFloat(mat.cost || 0) || 0;
               if (mat.supplier) bestSupplier = mat.supplier;
             }
-            
+
             const div = document.createElement("div");
             div.style.cssText = "padding:10px;border-bottom:1px solid rgba(10,155,3,.2);cursor:pointer;color:#e0e0e0;font-size:12px;";
-            div.innerHTML = `<div style="font-weight:600;color:#0a9b03;">${itemCode ? '[' + itemCode + '] ' : ''}${matName}</div><div style="font-size:11px;color:#a0a0a0;">Spec: ${spec} | Brand: ${brand} | Supplier: ${bestSupplier} | Price: ₱${bestPrice > 0 ? bestPrice.toLocaleString('en-US', {minimumFractionDigits:2}) : '0.00'}</div>`;
+            div.innerHTML = `<div style="font-weight:600;color:#0a9b03;">${itemCode ? '[' + itemCode + '] ' : ''}${matName}</div><div style="font-size:11px;color:#a0a0a0;">Spec: ${spec} | Brand: ${brand} | Available: ${mat.availableQty} ${mat.unit || ''} | Supplier: ${bestSupplier} | Price: ₱${bestPrice > 0 ? bestPrice.toLocaleString('en-US', {minimumFractionDigits:2}) : '0.00'}</div>`;
             div.onmouseover = function() { this.style.background = "rgba(10,155,3,.15)"; };
             div.onmouseout = function() { this.style.background = "transparent"; };
             div.onclick = function() {
               materialInput.value = matName;
-              materialInput.dataset.selectedId = mat.id;
+              materialInput.dataset.selectedId = mat.id || "";
+              materialInput.dataset.availableQty = String(mat.availableQty || 0);
               materialInput.dataset.selectedMat = JSON.stringify({
-                id: mat.id,
+                id: mat.id || "",
                 material: matName,
                 specification: spec,
                 brand: brand,
                 unit: mat.unit || "",
                 itemCode: itemCode,
                 cost: bestPrice,
-                supplier: bestSupplier
+                supplier: bestSupplier,
+                availableQty: mat.availableQty || 0,
               });
+
+              if (qtyInput) {
+                qtyInput.value = String(mat.availableQty || "");
+                qtyInput.setAttribute("max", String(mat.availableQty || ""));
+              }
+
               materialDropdown.style.display = "none";
             };
             materialDropdown.appendChild(div);
           });
           materialDropdown.style.display = "block";
         } else {
-          materialDropdown.innerHTML = `<div style="padding:10px;color:#a0a0a0;text-align:center;font-size:12px;">No materials found</div>`;
+          materialDropdown.innerHTML = `<div style="padding:10px;color:#a0a0a0;text-align:center;font-size:12px;">No available materials found</div>`;
           materialDropdown.style.display = "block";
         }
       };
+      
+      materialInput.value = "";
+      materialInput.oninput = function() {
+        renderMaterialSuggestions(this.value);
+      };
+      materialInput.onfocus = function() {
+        renderMaterialSuggestions(this.value);
+      };
+      materialInput.onclick = function() {
+        renderMaterialSuggestions(this.value);
+      };
+
+      const borrowSourceSelect = document.getElementById("mrBorrowFromWarehouse");
+      if (borrowSourceSelect) {
+        borrowSourceSelect.onchange = () => {
+          clearMaterialSelection();
+        };
+      }
       
       document.addEventListener("click", function(e) {
         if (!materialInput.contains(e.target) && !materialDropdown.contains(e.target)) {
           materialDropdown.style.display = "none";
         }
       });
-      
-      // Clear quantity input
-      const qtyInput = document.getElementById("mrAddQty");
-      if (qtyInput) {
-        qtyInput.value = "";
-      }
+
+      clearMaterialSelection();
       
       document.getElementById("mrModal").style.display = "flex";
     };
@@ -8199,6 +9339,24 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("mrType").onchange = () => {
       const val = document.getElementById("mrType").value;
       document.getElementById("borrowWarehouseDiv").style.display = val === "borrow" ? "block" : "none";
+
+      const materialInput = document.getElementById("mrAddMaterialSelect");
+      const materialDropdown = document.getElementById("mrMaterialDropdown");
+      const qtyInput = document.getElementById("mrAddQty");
+
+      if (materialInput) {
+        materialInput.value = "";
+        materialInput.dataset.selectedId = "";
+        materialInput.dataset.selectedMat = "";
+        materialInput.dataset.availableQty = "";
+      }
+      if (qtyInput) {
+        qtyInput.value = "";
+        qtyInput.removeAttribute("max");
+      }
+      if (materialDropdown) {
+        materialDropdown.style.display = "none";
+      }
     };
   }
 
@@ -8284,12 +9442,12 @@ document.addEventListener("DOMContentLoaded", () => {
       const warehouse = document.getElementById("mrWarehouse").value;
       
       if (!warehouse) {
-        showAlert("Please select requesting warehouse", "error");
+        showAlert("Please select requesting project", "error");
         return;
       }
       
       if (type === "borrow" && !document.getElementById("mrBorrowFromWarehouse").value) {
-        showAlert("Please select source warehouse for borrow request", "error");
+        showAlert("Please select source project for borrow request", "error");
         return;
       }
       
@@ -8305,7 +9463,7 @@ document.addEventListener("DOMContentLoaded", () => {
           type: type,
           warehouse: warehouse,
           borrowFromWarehouse: document.getElementById("mrBorrowFromWarehouse").value || "",
-          project: "",
+          project: warehouse,
           items: window.mrCurrentItems,
           status: "Pending",
           createdAt: new Date().toISOString(),
@@ -8734,6 +9892,7 @@ document.addEventListener("DOMContentLoaded", () => {
         supplier: itemSupplier,
         supplierPrices: supplierPrices,
         quantity: qtyInput.value,
+        availableQty: parseFloat((selectedMatData && selectedMatData.availableQty) || materialInput.dataset.availableQty || 0) || 0,
         unit: material.unit || (selectedMatData && selectedMatData.unit) || "PCS"
       };
       
@@ -8933,7 +10092,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const warehouseFilter = document.getElementById("warehouseFilter");
     if (warehouseFilter && allProjects.length > 0) {
       warehouseFilter.innerHTML = '<option value="all">All Projects</option>';
-      allProjects.forEach(proj => {
+      // Sort projects alphabetically by name
+      const sortedProjects = [...allProjects].sort((a, b) => {
+        const nameA = a.name || "";
+        const nameB = b.name || "";
+        return nameA.localeCompare(nameB);
+      });
+      sortedProjects.forEach(proj => {
         const label = `${proj.name} (${proj.projectId})`;
         warehouseFilter.innerHTML += `<option value="${proj.id}">${label}</option>`;
       });
@@ -9333,6 +10498,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Initialize empty report body
+  const reportBody = document.getElementById("reportBody");
+  if (reportBody) {
+    reportBody.innerHTML = "";
+  }
+
   // Generate monthly report
   window.generateMonthlyReport = async function() {
     const month = document.getElementById("reportMonth")?.value;
@@ -9414,29 +10585,7 @@ document.addEventListener("DOMContentLoaded", () => {
           continue;
         }
 
-        // 1. BEGINNING QUANTITY: Sum of all movements BEFORE the start of the month
-        let beginningQty = 0;
-        movements.forEach(m => {
-          const movementDate = new Date(m.date || "");
-          
-          // Include only movements before the start of the month
-          if (movementDate < startOfMonth &&
-              m.materialId === item.materialId &&
-              m.warehouseId === item.warehouseId) {
-            
-            const qty = parseInt(m.quantity) || 0;
-            const typeStr = (m.type || "").toLowerCase();
-            
-            // Classify as IN or OUT
-            if (typeStr.includes("add") || typeStr.includes("in") || typeStr === "in") {
-              beginningQty += qty;
-            } else if (typeStr.includes("delete") || typeStr.includes("out") || typeStr === "out") {
-              beginningQty -= qty;
-            }
-          }
-        });
-        beginningQty = Math.max(0, beginningQty);
-
+        // 1. BEGINNING QUANTITY: Calculate by reversing this month's movements
         // Get all movements for this material and warehouse DURING the month
         const monthMovements = movements.filter(m => {
           const movementDate = new Date(m.date || "");
@@ -9454,7 +10603,8 @@ document.addEventListener("DOMContentLoaded", () => {
           const typeStr = (m.type || "").toLowerCase();
           
           if (typeStr.includes("add") || typeStr.includes("in") || typeStr === "in") {
-            qtyIn += qty;
+            // Use absolute value to ensure positive quantities
+            qtyIn += Math.abs(qty);
           }
         });
 
@@ -9465,9 +10615,13 @@ document.addEventListener("DOMContentLoaded", () => {
           const typeStr = (m.type || "").toLowerCase();
           
           if (typeStr.includes("delete") || typeStr.includes("out") || typeStr === "out") {
-            qtyOut += qty;
+            // Use absolute value since deletions are stored as negative quantities
+            qtyOut += Math.abs(qty);
           }
         });
+
+        // Calculate TRUE beginning quantity: Current - (In - Out)
+        const beginningQty = item.currentQty - (qtyIn - qtyOut);
 
         // 4. ENDING QUANTITY: BeginningQty + QtyIn - QtyOut
         const endingQty = beginningQty + qtyIn - qtyOut;
@@ -9618,17 +10772,349 @@ document.addEventListener("DOMContentLoaded", () => {
     showAlert("✅ Report exported successfully!", "success");
   };
 
+  // Clear monthly report data
+  window.clearMonthlyReportData = async function() {
+    const month = document.getElementById("reportMonth")?.value;
+    const year = document.getElementById("reportYear")?.value;
+
+    if (!month || !year) {
+      showAlert("❌ Please select month and year first", "error");
+      return;
+    }
+
+    // Confirm deletion
+    if (!confirm(`❌ Are you sure you want to delete ALL data for ${new Date(year, month - 1).toLocaleDateString('en-US', {month:'long', year:'numeric'})}?\n\nThis will remove all stock movements for this period. This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      showAlert("⏳ Clearing data...", "info");
+
+      // Get all stock movements
+      const movementsSnap = await getDocs(collection(db, "stock_movements"));
+      const monthNum = parseInt(month);
+      const yearNum = parseInt(year);
+
+      // Filter movements that match the selected month/year
+      const startOfMonth = new Date(yearNum, monthNum - 1, 1);
+      const endOfMonth = new Date(yearNum, monthNum, 0, 23, 59, 59);
+
+      let deletedCount = 0;
+
+      // Delete matching documents
+      for (const doc of movementsSnap.docs) {
+        const movementData = doc.data();
+        const movementDate = new Date(movementData.date || "");
+
+        if (movementDate >= startOfMonth && movementDate <= endOfMonth) {
+          await deleteDoc(doc.ref);
+          deletedCount++;
+        }
+      }
+
+      // Clear the report table
+      const reportBody = document.getElementById("reportBody");
+      if (reportBody) {
+        reportBody.innerHTML = "";
+      }
+
+      showAlert(`✅ Successfully deleted ${deletedCount} data entries for ${new Date(year, month - 1).toLocaleDateString('en-US', {month:'long', year:'numeric'})}!`, "success");
+    } catch (err) {
+      console.error("Error clearing data:", err);
+      showAlert("❌ Error clearing data: " + err.message, "error");
+    }
+  };
+
+  // Auto-generate report for current month
+  window.autoGenerateMonthlyReport = async function(monthOverride = null, yearOverride = null) {
+    try {
+      // Use provided values or default to current month/year
+      const now = new Date();
+      const month = monthOverride || (now.getMonth() + 1);
+      const year = yearOverride || now.getFullYear();
+      const warehouse = document.getElementById("reportWarehouse")?.value || "";
+
+      // Set the dropdown values to match
+      document.getElementById("reportMonth").value = month;
+      document.getElementById("reportYear").value = year;
+
+      // Get all materials
+      const materialsSnap = await getDocs(collection(db, "materials"));
+      const materials = [];
+      materialsSnap.forEach(doc => {
+        materials.push({ id: doc.id, ...doc.data() });
+      });
+
+      // Get all stock movements for tracking
+      const movementsSnap = await getDocs(collection(db, "stock_movements"));
+      const movements = [];
+      movementsSnap.forEach(doc => {
+        movements.push({ id: doc.id, ...doc.data() });
+      });
+
+      // Generate report
+      const reportData = [];
+      const monthNum = parseInt(month);
+      const yearNum = parseInt(year);
+
+      // Get unique materials that have EVER had movements
+      const materialIdsWithMovements = new Set();
+      movements.forEach(m => {
+        if (m.materialId) {
+          materialIdsWithMovements.add(m.materialId);
+        }
+      });
+
+      // Group materials by warehouse and item code
+      const materialsByWH = {};
+      materials.forEach(mat => {
+        // Include all materials from stock monitoring (with itemCode, material, warehouse, quantity > 0)
+        const qty = parseInt(mat.quantity) || 0;
+        if (!mat.itemCode || !mat.material || !mat.warehouse || qty === 0) {
+          return;
+        }
+
+        const whId = mat.warehouse || "Unknown";
+        
+        // Apply warehouse filter immediately - skip if not matching selected warehouse
+        if (warehouse && warehouse !== "" && whId !== warehouse) {
+          return;
+        }
+
+        let whName = whId;
+        if (whId !== "Unknown") {
+          const whObj = allWarehouses.find(w => w.id === whId);
+          whName = whObj ? whObj.name : whId;
+        }
+        const key = `${whId}-${mat.itemCode}`;
+
+        if (!materialsByWH[key]) {
+          materialsByWH[key] = {
+            itemCode: mat.itemCode,
+            material: mat.material,
+            warehouseId: whId,
+            warehouseName: whName,
+            materialId: mat.id,
+            currentQty: qty
+          };
+        }
+      });
+
+      // Define month boundaries
+      const startOfMonth = new Date(yearNum, monthNum - 1, 1);
+      const endOfMonth = new Date(yearNum, monthNum, 0, 23, 59, 59);
+
+      // Calculate movements for each item
+      for (const key in materialsByWH) {
+        const item = materialsByWH[key];
+
+        // Filter warehouse if selected
+        if (warehouse && warehouse !== "" && item.warehouseId !== warehouse) {
+          continue;
+        }
+
+        // 1. BEGINNING QUANTITY
+        let beginningQty = item.currentQty;
+
+        // Get all movements for this material and warehouse DURING the month
+        const monthMovements = movements.filter(m => {
+          const movementDate = new Date(m.date || "");
+
+          return movementDate >= startOfMonth &&
+                 movementDate <= endOfMonth &&
+                 m.materialId === item.materialId &&
+                 m.warehouseId === item.warehouseId;
+        });
+
+        // 2. QUANTITY IN
+        let qtyIn = 0;
+        monthMovements.forEach(m => {
+          const qty = parseInt(m.quantity) || 0;
+          const typeStr = (m.type || "").toLowerCase();
+
+          if (typeStr.includes("add") || typeStr.includes("in") || typeStr === "in") {
+            qtyIn += Math.abs(qty);
+          }
+        });
+
+        // 3. QUANTITY OUT
+        let qtyOut = 0;
+        monthMovements.forEach(m => {
+          const qty = parseInt(m.quantity) || 0;
+          const typeStr = (m.type || "").toLowerCase();
+
+          if (typeStr.includes("delete") || typeStr.includes("out") || typeStr === "out") {
+            qtyOut += Math.abs(qty);
+          }
+        });
+
+        // 4. ENDING QUANTITY
+        const endingQty = beginningQty + qtyIn - qtyOut;
+
+        reportData.push({
+          itemCode: item.itemCode,
+          material: item.material,
+          warehouse: item.warehouseName,
+          warehouseId: item.warehouseId,
+          beginningQty: beginningQty,
+          qtyIn: qtyIn,
+          qtyOut: qtyOut,
+          endingQty: Math.max(0, endingQty),
+          movements: monthMovements
+        });
+      }
+
+      // Sort by item code
+      reportData.sort((a, b) => a.itemCode.localeCompare(b.itemCode));
+
+      // Render report table
+      const reportBody = document.getElementById("reportBody");
+      if (!reportBody) return;
+
+      if (reportData.length === 0) {
+        reportBody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:30px;color:#a0a0a0;">No data found for selected period.</td></tr>`;
+        return;
+      }
+
+      let html = "";
+      reportData.forEach((row, idx) => {
+        html += `
+          <tr style="background:rgba(10,155,3,.08);cursor:pointer;" onclick="document.getElementById('movements-${idx}').style.display = document.getElementById('movements-${idx}').style.display === 'none' ? 'table-row' : 'none'">
+            <td style="padding:12px;border-bottom:1px solid rgba(10,155,3,.1);color:#d0d0d0;font-weight:600;">${row.itemCode}</td>
+            <td style="padding:12px;border-bottom:1px solid rgba(10,155,3,.1);color:#d0d0d0;">${row.material}</td>
+            <td style="padding:12px;border-bottom:1px solid rgba(10,155,3,.1);color:#d0d0d0;text-align:center;">${row.warehouse}</td>
+            <td style="padding:12px;border-bottom:1px solid rgba(10,155,3,.1);color:#1dd1a1;text-align:center;font-weight:600;">${row.beginningQty}</td>
+            <td style="padding:12px;border-bottom:1px solid rgba(10,155,3,.1);color:#15c524;text-align:center;font-weight:600;">${row.qtyIn}</td>
+            <td style="padding:12px;border-bottom:1px solid rgba(10,155,3,.1);color:#ff6b6b;text-align:center;font-weight:600;">${row.qtyOut}</td>
+            <td style="padding:12px;border-bottom:1px solid rgba(10,155,3,.1);color:#1dd1a1;text-align:center;font-weight:600;">${row.endingQty}</td>
+          </tr>
+        `;
+
+        if (row.movements.length > 0) {
+          html += `
+            <tr id="movements-${idx}" style="display:none;background:rgba(10,155,3,.04);">
+              <td colspan="7" style="padding:0;">
+                <table style="width:100%;">
+                  <tr style="background:rgba(10,155,3,.1);">
+                    <td style="padding:8px;color:#1dd1a1;font-weight:600;font-size:11px;">Date</td>
+                    <td style="padding:8px;color:#1dd1a1;font-weight:600;font-size:11px;">Type</td>
+                    <td style="padding:8px;color:#1dd1a1;font-weight:600;font-size:11px;">Quantity</td>
+                    <td style="padding:8px;color:#1dd1a1;font-weight:600;font-size:11px;">Details</td>
+                  </tr>
+                  ${row.movements.map(m => {
+                    const moveDate = new Date(m.date || "").toLocaleDateString();
+                    return `<tr><td style="padding:6px;color:#d0d0d0;font-size:11px;">${moveDate}</td><td style="padding:6px;color:#d0d0d0;font-size:11px;">${m.type}</td><td style="padding:6px;color:#d0d0d0;font-size:11px;">${Math.abs(parseInt(m.quantity) || 0)}</td><td style="padding:6px;color:#a0a0a0;font-size:11px;">${m.notes || "-"}</td></tr>`;
+                  }).join("")}
+                </table>
+              </td>
+            </tr>
+          `;
+        }
+      });
+
+      reportBody.innerHTML = html;
+      console.log("✅ Monthly report auto-generated for", month + "/" + year);
+    } catch (err) {
+      console.error("Error auto-generating report:", err);
+    }
+  };
+
+  // Setup real-time listener for stock movements
+  window.setupReportAutoUpdate = function() {
+    try {
+      const unsubscribe = onSnapshot(collection(db, "stock_movements"), (snapshot) => {
+        console.log("📊 Stock movements updated, refreshing report...");
+        window.autoGenerateMonthlyReport();
+      }, (error) => {
+        console.error("Report listener error:", error);
+      });
+
+      // Store unsubscribe function for cleanup
+      window.reportUnsubscribe = unsubscribe;
+    } catch (err) {
+      console.error("Error setting up report listener:", err);
+    }
+  };
+
   // Setup event listeners for monthly report
   if (document.getElementById("generateReportBtn")) {
     document.getElementById("generateReportBtn").onclick = window.generateMonthlyReport;
   }
 
+  // Load warehouses FIRST before setting up dropdowns
+  populateReportWarehouses();
+
+  // Setup report dropdowns and auto-updates
+  setTimeout(() => {
+    // Populate year dropdown with current and nearby years
+    const yearSelect = document.getElementById("reportYear");
+    if (yearSelect) {
+      const currentYear = new Date().getFullYear();
+      for (let i = currentYear - 2; i <= currentYear + 1; i++) {
+        const option = document.createElement("option");
+        option.value = i;
+        option.textContent = i;
+        yearSelect.appendChild(option);
+      }
+      // Set to current year
+      yearSelect.value = currentYear;
+    }
+
+    // Set month dropdown to current month
+    const monthSelect = document.getElementById("reportMonth");
+    if (monthSelect) {
+      monthSelect.value = new Date().getMonth() + 1;
+    }
+
+    // Add change listeners to auto-generate on selection change
+    if (monthSelect) {
+      monthSelect.addEventListener("change", () => {
+        const month = monthSelect.value;
+        const year = yearSelect?.value;
+        if (month && year) {
+          window.autoGenerateMonthlyReport(parseInt(month), parseInt(year));
+        }
+      });
+    }
+
+    if (yearSelect) {
+      yearSelect.addEventListener("change", () => {
+        const month = monthSelect?.value;
+        const year = yearSelect.value;
+        if (month && year) {
+          window.autoGenerateMonthlyReport(parseInt(month), parseInt(year));
+        }
+      });
+    }
+
+    // Add change listener to warehouse dropdown for report filtering
+    const whSelect = document.getElementById("reportWarehouse");
+    if (whSelect) {
+      whSelect.addEventListener("change", () => {
+        const month = monthSelect?.value;
+        const year = yearSelect?.value;
+        if (month && year) {
+          window.autoGenerateMonthlyReport(parseInt(month), parseInt(year));
+        }
+      });
+    }
+
+    // Auto-generate report for current month
+    window.autoGenerateMonthlyReport();
+
+    // Setup real-time listener
+    window.setupReportAutoUpdate();
+
+    console.log("✅ Monthly report auto-update initialized");
+  }, 500);
+
   if (document.getElementById("exportReportBtn")) {
     document.getElementById("exportReportBtn").onclick = window.exportMonthlyReport;
   }
 
-  // Load warehouses when page loads
-  populateReportWarehouses();
+  if (document.getElementById("clearReportDataBtn")) {
+    document.getElementById("clearReportDataBtn").onclick = window.clearMonthlyReportData;
+  }
 
   // ==================== PROJECT CONFIGURATION MENU ====================
   // Global variables for project configuration
@@ -10000,3 +11486,5 @@ document.addEventListener("DOMContentLoaded", () => {
   loadTrades();
   loadProjectColumns();
   loadProjects();
+  loadMaterialRequests();
+  loadPurchaseOrders();
