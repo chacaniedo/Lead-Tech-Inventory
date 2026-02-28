@@ -63,11 +63,18 @@ async function loadDashboard() {
           datasets: [{
             data: Object.values(roleCounts),
             backgroundColor: [
-              "rgba(10, 155, 3, 0.8)",
-              "rgba(29, 209, 161, 0.8)",
-              "rgba(255, 165, 0, 0.8)",
-              "rgba(255, 107, 107, 0.8)",
-              "rgba(100, 200, 200, 0.8)"
+              "rgba(10, 155, 3, 0.8)",        // Green
+              "rgba(52, 152, 219, 0.8)",      // Blue
+              "rgba(255, 165, 0, 0.8)",       // Orange
+              "rgba(155, 89, 182, 0.8)",      // Purple
+              "rgba(26, 188, 156, 0.8)",      // Teal
+              "rgba(230, 126, 34, 0.8)",      // Dark Orange
+              "rgba(52, 73, 94, 0.8)",        // Dark Gray
+              "rgba(235, 104, 65, 0.8)",      // Coral
+              "rgba(48, 71, 94, 0.8)",        // Navy
+              "rgba(244, 208, 63, 0.8)",      // Gold
+              "rgba(175, 122, 161, 0.8)",     // Mauve
+              "rgba(41, 128, 185, 0.8)"       // Dark Blue
             ],
             borderColor: "rgba(15, 30, 53, 1)",
             borderWidth: 2
@@ -105,8 +112,8 @@ async function loadDashboard() {
             label: "User Count",
             data: [statusCounts.active, statusCounts.disabled],
             backgroundColor: [
-              "rgba(29, 209, 161, 0.8)",
-              "rgba(255, 107, 107, 0.8)"
+              "rgba(52, 152, 219, 0.8)",
+              "rgba(231, 76, 60, 0.8)"
             ],
             borderColor: [
               "rgba(29, 209, 161, 1)",
@@ -146,6 +153,87 @@ async function loadDashboard() {
 }
 
 // ==================== UTILITY FUNCTIONS ====================
+function hideLegacyAttendanceRoleFields() {
+  const departmentGroup = document.getElementById("departmentGroup");
+  const designationGroup = document.getElementById("designationGroup");
+  const departmentInput = document.getElementById("userDepartment");
+  const designationInput = document.getElementById("userDesignation");
+
+  if (departmentGroup) {
+    departmentGroup.style.display = "none";
+  }
+  if (designationGroup) {
+    designationGroup.style.display = "none";
+  }
+
+  const departmentWrapper = departmentInput?.closest(".form-group");
+  const designationWrapper = designationInput?.closest(".form-group");
+
+  if (departmentWrapper) {
+    departmentWrapper.style.display = "none";
+  }
+  if (designationWrapper) {
+    designationWrapper.style.display = "none";
+  }
+
+  if (departmentInput) {
+    departmentInput.required = false;
+    if (departmentInput.tagName === "INPUT") {
+      departmentInput.type = "hidden";
+    }
+  }
+
+  if (designationInput) {
+    designationInput.required = false;
+    designationInput.style.display = "none";
+  }
+}
+
+function forceRemoveAttendanceExtraFields() {
+  const userModal = document.getElementById("userModal");
+  if (!userModal) return;
+
+  userModal.querySelectorAll(".form-group").forEach((group) => {
+    const labelText = (group.querySelector("label")?.textContent || "").trim().toLowerCase();
+    if (labelText.includes("department/site") || labelText.includes("designation")) {
+      group.remove();
+    }
+  });
+
+  const form = userModal.querySelector("form");
+  if (!form) return;
+
+  let departmentInput = document.getElementById("userDepartment");
+  if (!departmentInput) {
+    departmentInput = document.createElement("input");
+    departmentInput.type = "hidden";
+    departmentInput.id = "userDepartment";
+    departmentInput.value = "";
+    form.appendChild(departmentInput);
+  } else {
+    departmentInput.type = "hidden";
+    departmentInput.required = false;
+  }
+
+  let designationInput = document.getElementById("userDesignation");
+  if (!designationInput) {
+    designationInput = document.createElement("input");
+    designationInput.type = "hidden";
+    designationInput.id = "userDesignation";
+    designationInput.value = "";
+    form.appendChild(designationInput);
+  } else if (designationInput.tagName !== "INPUT") {
+    const replacement = document.createElement("input");
+    replacement.type = "hidden";
+    replacement.id = "userDesignation";
+    replacement.value = "";
+    designationInput.replaceWith(replacement);
+  } else {
+    designationInput.type = "hidden";
+    designationInput.required = false;
+  }
+}
+
 function showAlert(message, type = "error") {
   const alert = document.createElement("div");
   alert.style.cssText = `
@@ -657,8 +745,7 @@ window.goToInventoryUsers = (filter = '') => {
 
 // Navigate to Inventory Warehouse Management
 window.goToInventoryWarehouse = () => {
-  sessionStorage.setItem('navigateToWarehouse', 'true');
-  window.location.href = "dashboard.html";
+  window.location.href = "dashboard.html#warehouse";
 };
 
 // Edit restriction
@@ -720,16 +807,32 @@ window.editRestriction = async (userId) => {
         userDropdown.style.display = "none";
       }
 
-      // Check the appropriate checkboxes based on stored restrictions
-      const inventoryCheckbox = document.getElementById("restrictionInventory");
-      const attendanceCheckbox = document.getElementById("restrictionAttendance");
-      const purchasingCheckbox = document.getElementById("restrictionPurchasing");
-      const financeCheckbox = document.getElementById("restrictionFinance");
-      
-      if (inventoryCheckbox) inventoryCheckbox.checked = restriction.inventory || false;
-      if (attendanceCheckbox) attendanceCheckbox.checked = restriction.attendance || false;
-      if (purchasingCheckbox) purchasingCheckbox.checked = restriction.purchasing || false;
-      if (financeCheckbox) financeCheckbox.checked = restriction.finance || false;
+      // Check the module restriction checkboxes based on stored allowedModules
+      if (restriction.allowedModules && Array.isArray(restriction.allowedModules)) {
+        // First, uncheck all
+        document.querySelectorAll(".module-restriction").forEach(checkbox => {
+          checkbox.checked = false;
+        });
+        // Then check the allowed ones
+        restriction.allowedModules.forEach(module => {
+          const checkbox = document.querySelector(`.module-restriction[data-module="${module}"]`);
+          if (checkbox) {
+            checkbox.checked = true;
+          }
+        });
+      }
+
+      // Check the appropriate action permission checkboxes based on stored modules
+      if (restriction.modules) {
+        Object.entries(restriction.modules).forEach(([module, actions]) => {
+          Object.entries(actions).forEach(([action, allowed]) => {
+            const checkbox = document.querySelector(`.action-permission[data-module="${module}"][data-action="${action}"]`);
+            if (checkbox) {
+              checkbox.checked = allowed || false;
+            }
+          });
+        });
+      }
 
       // Update button text
       const saveBtn = document.getElementById("saveRestrictionBtn");
@@ -772,7 +875,7 @@ async function loadPermissions() {
     const restrictionsSnap = await getDocs(collection(db, "user_restrictions"));
     
     if (restrictionsSnap.empty) {
-      permissionsBody.innerHTML = '<tr style="border-bottom:1px solid rgba(10, 155, 3, 0.2);"><td colspan="5" style="text-align:center; padding:30px; color:#a0a0a0;">No restrictions set yet. Users have default access based on their role.</td></tr>';
+      permissionsBody.innerHTML = '<tr style="border-bottom:1px solid rgba(10, 155, 3, 0.2);"><td colspan="4" style="text-align:center; padding:30px; color:#a0a0a0;">No restrictions set yet. Users have default access based on their role.</td></tr>';
       return;
     }
 
@@ -781,26 +884,27 @@ async function loadPermissions() {
       const user = allUsers.find(u => u.id === restriction.userId);
       
       if (user) {
-        const modules = [
-          restriction.inventory ? "Inventory" : "",
-          restriction.attendance ? "Attendance" : "",
-          restriction.purchasing ? "Purchasing" : "",
-          restriction.dashboard ? "Dashboard" : ""
-        ].filter(m => m).join(", ");
-
-        const restrictionText = [
-          restriction.inventory ? "❌ No Inventory" : "",
-          restriction.attendance ? "❌ No Attendance" : "",
-          restriction.purchasing ? "❌ No Purchasing" : "",
-          restriction.dashboard ? "❌ No Dashboard" : ""
-        ].filter(t => t).join(", ");
+        // Build permissions summary from modules object
+        let permissionsSummary = [];
+        if (restriction.modules) {
+          Object.entries(restriction.modules).forEach(([module, actions]) => {
+            const allowedActions = Object.entries(actions)
+              .filter(([action, allowed]) => allowed)
+              .map(([action]) => action.charAt(0).toUpperCase() + action.slice(1));
+            
+            if (allowedActions.length > 0) {
+              permissionsSummary.push(`${module.charAt(0).toUpperCase() + module.slice(1)}: ${allowedActions.join(", ")}`);
+            } else {
+              permissionsSummary.push(`${module.charAt(0).toUpperCase() + module.slice(1)}: No Actions`);
+            }
+          });
+        }
 
         permissionsBody.innerHTML += `
           <tr style="border-bottom:1px solid rgba(10, 155, 3, 0.2);">
             <td style="padding:12px;">${user.name || "Unknown"}</td>
             <td style="padding:12px;">${(user.role || "N/A").toUpperCase()}</td>
-            <td style="padding:12px;">${modules || "All Modules"}</td>
-            <td style="padding:12px;color:#ff6b6b;">${restrictionText || "None"}</td>
+            <td style="padding:12px;color:#1dd1a1;font-size:13px;">${permissionsSummary.join("<br>") || "No modules configured"}</td>
             <td style="padding:12px;">
               <button class="btn-edit" onclick="editRestriction('${restriction.userId}')">Edit</button>
               <button class="btn-delete" onclick="deleteRestriction('${restriction.userId}', '${user.name || 'Unknown'}')">Delete</button>
@@ -1252,19 +1356,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Menu Toggle for User Management
-  const userManagementToggle = document.getElementById("userManagementToggle");
-  const userManagementSubmenu = document.getElementById("userManagementSubmenu");
-  if (userManagementToggle && userManagementSubmenu) {
-    userManagementToggle.addEventListener("click", () => {
-      const isHidden = userManagementSubmenu.style.display === "none";
-      userManagementSubmenu.style.display = isHidden ? "flex" : "none";
-      userManagementToggle.classList.toggle("active");
-    });
-    // Show user management submenu by default
-    userManagementSubmenu.style.display = "flex";
-  }
-
   // Hamburger Menu Toggle
   const menuBtn = document.getElementById("menuBtn");
   const sidebar = document.getElementById("sidebar");
@@ -1345,20 +1436,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       document.getElementById("userEmail").value = "";
       document.getElementById("userRole").value = "";
       document.getElementById("userWarehouse").value = "";
-      document.getElementById("userDepartment").value = "";
-      document.getElementById("userDesignation").value = "";
       if (warehouseGroup) {
         warehouseGroup.style.display = "none";
       }
-      const departmentGroup = document.getElementById("departmentGroup");
-      const designationGroup = document.getElementById("designationGroup");
       const userSearchGroup = document.getElementById("userSearchGroup");
-      if (departmentGroup) {
-        departmentGroup.style.display = "none";
-      }
-      if (designationGroup) {
-        designationGroup.style.display = "none";
-      }
       if (userSearchGroup) {
         userSearchGroup.style.display = "none";
       }
@@ -1390,15 +1471,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (warehouseGroup) {
         warehouseGroup.style.display = role === "warehouse" ? "block" : "none";
       }
-      const departmentGroup = document.getElementById("departmentGroup");
-      const designationGroup = document.getElementById("designationGroup");
       const userSearchGroup = document.getElementById("userSearchGroup");
-      if (departmentGroup) {
-        departmentGroup.style.display = (role === "attendance" || role === "employee") ? "block" : "none";
-      }
-      if (designationGroup) {
-        designationGroup.style.display = (role === "attendance" || role === "employee") ? "block" : "none";
-      }
       if (userSearchGroup) {
         userSearchGroup.style.display = role === "admin" ? "block" : "none";
       }
@@ -1411,8 +1484,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       const email = (document.getElementById("userEmail").value || "").trim();
       const role = (document.getElementById("userRole").value || "").trim();
       const warehouse = (document.getElementById("userWarehouse").value || "").trim();
-      const department = (document.getElementById("userDepartment").value || "").trim();
-      const designation = (document.getElementById("userDesignation").value || "").trim();
 
       if (!name || !email || !role) {
         showAlert("Fill in all required fields", "error");
@@ -1422,17 +1493,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (role === "warehouse" && !warehouse) {
         showAlert("Please select a warehouse", "error");
         return;
-      }
-
-      if (role === "attendance" || role === "employee") {
-        if (!department) {
-          showAlert("Please enter a department/site", "error");
-          return;
-        }
-        if (!designation) {
-          showAlert("Please select a designation", "error");
-          return;
-        }
       }
 
       try {
@@ -1464,9 +1524,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             if (role === "warehouse") {
               userData.warehouse = warehouse;
-            } else if (role === "attendance" || role === "employee") {
-              userData.department = department;
-              userData.designation = designation;
             }
 
             const collectionName = getCollectionName(role);
@@ -1487,9 +1544,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
           if (role === "warehouse") {
             userData.warehouse = warehouse;
-          } else if (role === "attendance" || role === "employee") {
-            userData.department = department;
-            userData.designation = designation;
           }
 
           const editingUser = allUsers.find(u => u.id === editingUserId);
@@ -1873,12 +1927,33 @@ document.addEventListener("DOMContentLoaded", async () => {
         e.stopPropagation();
         console.log("Save Restriction clicked, Mode:", currentRestrictionMode);
         
-        const restrictions = {
-          inventory: document.getElementById("restrictionInventory")?.checked || false,
-          attendance: document.getElementById("restrictionAttendance")?.checked || false,
-          purchasing: document.getElementById("restrictionPurchasing")?.checked || false,
-          finance: document.getElementById("restrictionFinance")?.checked || false
-        };
+        // Collect module restrictions (which modules are accessible)
+        const allowedModules = [];
+        const allModules = ["inventory", "purchasing", "finance", "attendance"];
+        allModules.forEach(module => {
+          const checkbox = document.querySelector(`.module-restriction[data-module="${module}"]`);
+          if (checkbox && checkbox.checked) {
+            allowedModules.push(module);
+          }
+        });
+        
+        // Validate that at least one module is selected
+        if (allowedModules.length === 0) {
+          showAlert("Please select at least one module", "error");
+          return;
+        }
+        
+        // Collect action-based permissions (only for allowed modules)
+        const modules = {};
+        const actions = ["view", "create", "edit", "delete"];
+        
+        allowedModules.forEach(module => {
+          modules[module] = {};
+          actions.forEach(action => {
+            const checkbox = document.querySelector(`.action-permission[data-module="${module}"][data-action="${action}"]`);
+            modules[module][action] = checkbox ? checkbox.checked : false;
+          });
+        });
 
         try {
           if (currentRestrictionMode === "per-user") {
@@ -1897,12 +1972,13 @@ document.addEventListener("DOMContentLoaded", async () => {
             await setDoc(doc(db, "user_restrictions", userId), {
               userId,
               restrictionType: "per-user",
-              ...restrictions,
+              allowedModules,
+              modules,
               updatedAt: new Date().toISOString()
             });
 
             const actionText = editingRestrictionUserId ? "updated" : "saved";
-            showAlert(`User restriction ${actionText} successfully!`, "success");
+            showAlert(`User permission ${actionText} successfully!`, "success");
             editingRestrictionUserId = null;
           } else if (currentRestrictionMode === "role-based") {
             // Role-based mode: save for all users with that role
@@ -1930,31 +2006,30 @@ document.addEventListener("DOMContentLoaded", async () => {
                 userId: user.id,
                 restrictionType: "role-based",
                 role: selectedRole,
-                ...restrictions,
+                allowedModules,
+                modules,
                 updatedAt: new Date().toISOString()
               });
             }
 
-            showAlert(`Restrictions applied to ${usersWithRole.length} user(s) with role: ${selectedRole}`, "success");
+            showAlert(`Permissions applied to ${usersWithRole.length} user(s) with role: ${selectedRole}`, "success");
           }
 
           if (restrictionModal) {
             restrictionModal.classList.remove("active");
           }
           
-          // Clear form
+          // Clear form - clear all checkboxes and fields
+          document.querySelectorAll(".module-restriction").forEach(checkbox => {
+            checkbox.checked = false;
+          });
+          document.querySelectorAll(".action-permission").forEach(checkbox => {
+            checkbox.checked = false;
+          });
+          
           if (restrictionUserSelect) restrictionUserSelect.value = "";
           if (restrictionUserSearch) restrictionUserSearch.value = "";
           if (restrictionRoleSelect) restrictionRoleSelect.value = "";
-          const inventoryCheck = document.getElementById("restrictionInventory");
-          const attendanceCheck = document.getElementById("restrictionAttendance");
-          const purchasingCheck = document.getElementById("restrictionPurchasing");
-          const financeCheck = document.getElementById("restrictionFinance");
-          
-          if (inventoryCheck) inventoryCheck.checked = false;
-          if (attendanceCheck) attendanceCheck.checked = false;
-          if (purchasingCheck) purchasingCheck.checked = false;
-          if (financeCheck) financeCheck.checked = false;
 
           // Reset button text
           if (saveRestrictionBtn) {
@@ -1964,7 +2039,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           editingRestrictionUserId = null;
           loadPermissions();
         } catch (err) {
-          showAlert("Error saving restriction: " + err.message, "error");
+          showAlert("Error saving permission: " + err.message, "error");
         }
       });
     }
