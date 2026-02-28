@@ -9,7 +9,10 @@
   collection,
   query,
   where,
-  getDocs
+  getDocs,
+  loadUserPermissions,
+  checkUserPermission,
+  getPermissionErrorMessage,
 } from "./firebase.js";
 
 console.log("📄 modules.js loaded - displaying modules page");
@@ -85,29 +88,29 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       let userRole = null;
       
-      // Try admin_users first
-      let userDoc = await getDoc(doc(db, "admin_users", user.uid));
+      // Try warehouse_users first to avoid admin record overriding warehouse role
+      let userDoc = await getDoc(doc(db, "warehouse_users", user.uid));
       if (userDoc.exists()) {
         userRole = userDoc.data().role;
       } else {
-        // Then try to get user from inventory_users, warehouse_users, purchasing_users, or attendance_users
+        // Then try to get user from inventory_users, purchasing_users, attendance_users, finance_users, admin_users, or employees
         userDoc = await getDoc(doc(db, "inventory_users", user.uid));
         if (userDoc.exists()) {
           userRole = userDoc.data().role;
         } else {
-          userDoc = await getDoc(doc(db, "warehouse_users", user.uid));
+          userDoc = await getDoc(doc(db, "purchasing_users", user.uid));
           if (userDoc.exists()) {
             userRole = userDoc.data().role;
           } else {
-            userDoc = await getDoc(doc(db, "purchasing_users", user.uid));
+            userDoc = await getDoc(doc(db, "attendance_users", user.uid));
             if (userDoc.exists()) {
               userRole = userDoc.data().role;
             } else {
-              userDoc = await getDoc(doc(db, "attendance_users", user.uid));
+              userDoc = await getDoc(doc(db, "finance_users", user.uid));
               if (userDoc.exists()) {
                 userRole = userDoc.data().role;
               } else {
-                userDoc = await getDoc(doc(db, "finance_users", user.uid));
+                userDoc = await getDoc(doc(db, "admin_users", user.uid));
                 if (userDoc.exists()) {
                   userRole = userDoc.data().role;
                 } else {
@@ -125,7 +128,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // If still not found, try querying by email
       if (!userRole) {
-        let q = query(collection(db, "admin_users"), where("email", "==", user.email));
+        let q = query(collection(db, "warehouse_users"), where("email", "==", user.email));
         let qSnap = await getDocs(q);
         if (!qSnap.empty) {
           userRole = qSnap.docs[0].data().role;
@@ -135,22 +138,22 @@ document.addEventListener("DOMContentLoaded", () => {
           if (!qSnap.empty) {
             userRole = qSnap.docs[0].data().role;
           } else {
-            q = query(collection(db, "warehouse_users"), where("email", "==", user.email));
+            q = query(collection(db, "purchasing_users"), where("email", "==", user.email));
             qSnap = await getDocs(q);
             if (!qSnap.empty) {
               userRole = qSnap.docs[0].data().role;
             } else {
-              q = query(collection(db, "purchasing_users"), where("email", "==", user.email));
+              q = query(collection(db, "attendance_users"), where("email", "==", user.email));
               qSnap = await getDocs(q);
               if (!qSnap.empty) {
                 userRole = qSnap.docs[0].data().role;
               } else {
-                q = query(collection(db, "attendance_users"), where("email", "==", user.email));
+                q = query(collection(db, "finance_users"), where("email", "==", user.email));
                 qSnap = await getDocs(q);
                 if (!qSnap.empty) {
                   userRole = qSnap.docs[0].data().role;
                 } else {
-                  q = query(collection(db, "finance_users"), where("email", "==", user.email));
+                  q = query(collection(db, "admin_users"), where("email", "==", user.email));
                   qSnap = await getDocs(q);
                   if (!qSnap.empty) {
                     userRole = qSnap.docs[0].data().role;
@@ -173,6 +176,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
       console.log("🔍 DEBUG: Detected user role:", role);
       console.log("🔍 DEBUG: Admin button element:", adminPortalBtn);
+
+      // 🔐 Load user permissions for action-based access control
+      await loadUserPermissions(user.uid);
+      console.log("✅ User permissions loaded for permission checking");
 
       // Check for user restrictions
       let userRestrictions = null;
@@ -236,89 +243,27 @@ document.addEventListener("DOMContentLoaded", () => {
           finance: false
         };
 
-        // If user has restrictions set in admin portal, those define what modules they are RESTRICTED from
-        if (userRestrictions) {
-          // Restrictions in admin portal mean "NO ACCESS" (checked = restricted)
-          finalAccess.inventory = !userRestrictions.inventory;
-          finalAccess.attendance = !userRestrictions.attendance;
-          finalAccess.purchasing = !userRestrictions.purchasing;
-          finalAccess.finance = !userRestrictions.finance;
+        // If user has module restrictions set by admin, use allowedModules array
+        if (userRestrictions && userRestrictions.allowedModules && Array.isArray(userRestrictions.allowedModules)) {
+          console.log("✅ User has module restrictions - allowed modules:", userRestrictions.allowedModules);
+          // Only these modules are accessible
+          finalAccess.inventory = userRestrictions.allowedModules.includes("inventory");
+          finalAccess.attendance = userRestrictions.allowedModules.includes("attendance");
+          finalAccess.purchasing = userRestrictions.allowedModules.includes("purchasing");
+          finalAccess.finance = userRestrictions.allowedModules.includes("finance");
+        } else {
+          // No restrictions - user gets default access based on role
+          console.log("⚠️ No module restrictions found - allowing default access by role");
+          if (role === "inventory") finalAccess.inventory = true;
+          if (role === "warehouse") finalAccess.inventory = true;
+          if (role === "purchasing") finalAccess.purchasing = true;
+          if (role === "attendance") finalAccess.attendance = true;
+          if (role === "finance") finalAccess.finance = true;
         }
 
-        if (role === "inventory") {
-          // Show all modules, access based on admin portal permissions
-          if (inventoryModule) {
-            inventoryModule.style.display = "flex";
-            setupModuleCard(inventoryModule, "dashboard.html", finalAccess.inventory);
-          }
-          if (attendanceModule) {
-            attendanceModule.style.display = "flex";
-            setupModuleCard(attendanceModule, "attendance.html", finalAccess.attendance);
-          }
-          if (purchasingModule) {
-            purchasingModule.style.display = "flex";
-            setupModuleCard(purchasingModule, "purchasing.html", finalAccess.purchasing);
-          }
-          if (financeModule) {
-            financeModule.style.display = "flex";
-            setupModuleCard(financeModule, "finance.html", finalAccess.finance);
-          }
-        } else if (role === "purchasing") {
-          // Show all modules, access based on admin portal permissions
-          if (inventoryModule) {
-            inventoryModule.style.display = "flex";
-            setupModuleCard(inventoryModule, "dashboard.html", finalAccess.inventory);
-          }
-          if (attendanceModule) {
-            attendanceModule.style.display = "flex";
-            setupModuleCard(attendanceModule, "attendance.html", finalAccess.attendance);
-          }
-          if (purchasingModule) {
-            purchasingModule.style.display = "flex";
-            setupModuleCard(purchasingModule, "purchasing.html", finalAccess.purchasing);
-          }
-          if (financeModule) {
-            financeModule.style.display = "flex";
-            setupModuleCard(financeModule, "finance.html", finalAccess.finance);
-          }
-        } else if (role === "attendance") {
-          // Show all modules, access based on admin portal permissions
-          if (inventoryModule) {
-            inventoryModule.style.display = "flex";
-            setupModuleCard(inventoryModule, "dashboard.html", finalAccess.inventory);
-          }
-          if (attendanceModule) {
-            attendanceModule.style.display = "flex";
-            setupModuleCard(attendanceModule, "attendance.html", finalAccess.attendance);
-          }
-          if (purchasingModule) {
-            purchasingModule.style.display = "flex";
-            setupModuleCard(purchasingModule, "purchasing.html", finalAccess.purchasing);
-          }
-          if (financeModule) {
-            financeModule.style.display = "flex";
-            setupModuleCard(financeModule, "finance.html", finalAccess.finance);
-          }
-        } else if (role === "warehouse") {
-          // Show all modules, access based on admin portal permissions
-          if (inventoryModule) {
-            inventoryModule.style.display = "flex";
-            setupModuleCard(inventoryModule, "dashboard.html", finalAccess.inventory);
-          }
-          if (attendanceModule) {
-            attendanceModule.style.display = "flex";
-            setupModuleCard(attendanceModule, "attendance.html", finalAccess.attendance);
-          }
-          if (purchasingModule) {
-            purchasingModule.style.display = "flex";
-            setupModuleCard(purchasingModule, "purchasing.html", finalAccess.purchasing);
-          }
-          if (financeModule) {
-            financeModule.style.display = "flex";
-            setupModuleCard(financeModule, "finance.html", finalAccess.finance);
-          }
-        } else if (role === "finance") {
-          // Show all modules, access based on admin portal permissions
+        // Apply access based on finalAccess object for all non-employee roles
+        if (role !== "employee") {
+          // Show all modules with appropriate access
           if (inventoryModule) {
             inventoryModule.style.display = "flex";
             setupModuleCard(inventoryModule, "dashboard.html", finalAccess.inventory);
@@ -343,7 +288,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }
           if (attendanceModule) {
             attendanceModule.style.display = "flex";
-            setupModuleCard(attendanceModule, "attendance.html", true);
+            setupModuleCard(attendanceModule, "employee-dashboard.html", true);
           }
           if (purchasingModule) {
             purchasingModule.style.display = "none";
