@@ -23,13 +23,14 @@ import {
 
 let allMaterials = [];
 let allWarehouses = [];
+let allProjects = [];
 let allMaterialRequests = [];
 let currentUser = null;
 let unsubscribeAuth = null;
 let editingMaterialId = null;
 let editingWarehouseId = null;
 let stockStatusChartInstance = null;
-let warehouseChartInstance = null;
+let projectDistributionChartInstance = null;
 let currentMRItems = [];  // Track items being added to MR
 let stockChartDailyData = {}; // Store daily stock data {date: {day: 'Thu', stock: 7607}}
 let stockChartMidnightInterval = null; // Store interval reference
@@ -37,8 +38,8 @@ let materialColumns = [
   { name: "Item Code", visible: true },
   { name: "Material", visible: true },
   { name: "Specification", visible: true },
-  { name: "Category", visible: true },
-  { name: "Wh Loc", visible: true },
+  { name: "Brand", visible: true },
+  { name: "Unit", visible: true },
   { name: "Warehouse", visible: true },
   { name: "Status", visible: true },
   { name: "Quantity", visible: true }
@@ -65,6 +66,19 @@ function showAlert(message, type = "success") {
   alert.innerHTML = message.replace(/\n/g, "<br>");
   document.body.appendChild(alert);
   setTimeout(() => alert.remove(), 4200);
+}
+
+// Generate sequential MR number (MR001, MR002, etc.) - synced with main dashboard
+async function getNextMRNumber() {
+  try {
+    const snap = await getDocs(collection(db, "materialRequests"));
+    let count = snap.size + 1;
+    
+    return `MR${String(count).padStart(3, '0')}`;
+  } catch (err) {
+    console.error("Error getting MR number:", err);
+    return `MR001`;
+  }
 }
 
 function showDeleteConfirmCard(itemType, itemName) {
@@ -172,7 +186,7 @@ async function loadWarehouses() {
     });
     renderWarehouseTable();
     updateWarehouseDropdowns();
-    updateWarehouseChart();
+    updateProjectDistributionChart();
     updateWeeklyStockChart();
     return Promise.resolve();
   } catch (err) {
@@ -350,6 +364,9 @@ function updateMaterialSummaries(warehouse = "all") {
   document.getElementById("dashTotalStock") && (document.getElementById("dashTotalStock").textContent = total);
   document.getElementById("dashTotalItems") && (document.getElementById("dashTotalItems").textContent = items);
   document.getElementById("dashLowStock") && (document.getElementById("dashLowStock").textContent = low);
+  
+  // Update near-to-expire count
+  updateNearExpireCount(warehouse);
 }
 
 // Stock Monitoring Table Rendering
@@ -380,7 +397,7 @@ function renderStockMonitoring(warehouseFilter = "") {
     }
     
     // Apply warehouse filter from dropdown/tabs
-    if (warehouseFilter && mat.warehouse !== warehouseFilter) return;
+    if (warehouseFilter && warehouseFilter !== "all" && mat.warehouse !== warehouseFilter) return;
     
     // Apply search filter
     if (searchQuery) {
@@ -421,11 +438,11 @@ function renderStockMonitoring(warehouseFilter = "") {
   
   if (materials.length === 0) {
     inventoryBody.innerHTML = "";
-    emptyMsg.style.display = "block";
+    if (emptyMsg) emptyMsg.style.display = "block";
     return;
   }
   
-  emptyMsg.style.display = "none";
+  if (emptyMsg) emptyMsg.style.display = "none";
   
   materials.forEach(mat => {
     const quantity = mat.totalQuantity;
@@ -448,10 +465,10 @@ function renderStockMonitoring(warehouseFilter = "") {
         row += `<td>${mat.material || "-"}</td>`;
       } else if (col.name === "Specification") {
         row += `<td>${mat.specification || "-"}</td>`;
-      } else if (col.name === "Category") {
-        row += `<td>${mat.category || "-"}</td>`;
-      } else if (col.name === "Wh Loc") {
-        row += `<td>${mat.whloc || "-"}</td>`;
+      } else if (col.name === "Brand") {
+        row += `<td>${mat.brand || "-"}</td>`;
+      } else if (col.name === "Unit") {
+        row += `<td>${mat.unit || "PCS"}</td>`;
       } else if (col.name === "Warehouse") {
         row += `<td>${warehouseName}</td>`;
       } else if (col.name === "Status") {
@@ -640,19 +657,27 @@ window.viewMaterialDetails = function(materialId) {
   });
 };
 
-function updateWarehouseChart() {
-  const canvas = document.getElementById("warehouseChart");
+function updateProjectDistributionChart() {
+  const canvas = document.getElementById("projectDistributionChart");
   if (!canvas) return;
 
-  const warehouseData = {};
+  // Count materials by project using same logic as Stock Monitoring
+  const projectData = {};
+  
   allMaterials.forEach(mat => {
-    const wh = mat.warehouse || "Unassigned";
-    warehouseData[wh] = (warehouseData[wh] || 0) + parseInt(mat.quantity || 0);
+    // Only count materials that are actually in stock (same as Stock Monitoring tab)
+    const quantity = parseInt(mat.quantity) || 0;
+    if (!mat.itemCode || !mat.material || !mat.warehouse || quantity === 0) return;
+    
+    // Sum quantity for each project/warehouse
+    const projectId = mat.warehouse;
+    projectData[projectId] = (projectData[projectId] || 0) + quantity;
   });
 
   const labels = [];
   const data = [];
   
+  // Better color palette - softer, more professional
   const colors = [
     "#4CAF50", "#2196F3", "#FF9800", "#9C27B0",
     "#00BCD4", "#F44336", "#E91E63", "#673AB7",
@@ -660,48 +685,60 @@ function updateWarehouseChart() {
     "#607D8B", "#FF5722", "#8BC34A", "#FFEB3B"
   ];
   
-  allWarehouses.forEach((wh, idx) => {
-    const id = wh.id;
-    labels.push(wh.name);
-    data.push(warehouseData[id] || 0);
-  });
-
-  if (warehouseChartInstance) {
-    warehouseChartInstance.destroy();
+  // Show ALL projects from project management with their stock totals
+  if (allWarehouses && allWarehouses.length > 0) {
+    allWarehouses.forEach((project, idx) => {
+      const projectCode = project.code || project.projectId || project.name || project.id;
+      const projectDocId = project.id;
+      
+      // Try matching by both code AND document ID
+      const quantity = projectData[projectCode] || projectData[projectDocId] || 0;
+      
+      labels.push(projectCode);
+      data.push(quantity);
+    });
   }
 
+  // Destroy previous chart if it exists
+  if (projectDistributionChartInstance) {
+    projectDistributionChartInstance.destroy();
+  }
+
+  // Create new HORIZONTAL BAR chart
   const ctx = canvas.getContext("2d");
-  warehouseChartInstance = new Chart(ctx, {
-    type: "pie",
+  projectDistributionChartInstance = new Chart(ctx, {
+    type: "bar",
     data: {
-      labels: labels.length > 0 ? labels : ["No Data"],
+      labels: labels.length > 0 ? labels : ["No Projects"],
       datasets: [{
-        data: data.length > 0 ? data : [1],
+        label: "Quantity (units)",
+        data: data.length > 0 ? data : [0],
         backgroundColor: colors.slice(0, Math.max(labels.length, 1)),
         borderColor: "#0f1419",
-        borderWidth: 2
+        borderWidth: 1
       }]
     },
     options: {
+      indexAxis: "y",
       responsive: true,
-      maintainAspectRatio: true,
+      maintainAspectRatio: false,
       plugins: {
         legend: {
-          position: "bottom",
+          display: true,
+          position: "top",
           labels: {
             color: "#d0d0d0",
-            font: { size: 12, weight: "600" },
-            padding: 15,
-            usePointStyle: true
+            font: { size: 11, weight: "600" },
+            padding: 10
           }
         },
         tooltip: {
           callbacks: {
             label: function(context) {
-              const value = context.parsed;
+              const value = context.parsed.x;
               const total = context.dataset.data.reduce((a, b) => a + b, 0);
-              const percentage = ((value / total) * 100).toFixed(1);
-              return context.label + ": " + value + " units (" + percentage + "%)";
+              const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+              return "Quantity: " + value + " units (" + percentage + "%)";
             }
           },
           backgroundColor: "rgba(0, 0, 0, 0.8)",
@@ -709,6 +746,27 @@ function updateWarehouseChart() {
           bodyColor: "#fff",
           borderColor: "#666",
           borderWidth: 1
+        }
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          ticks: {
+            color: "#d0d0d0",
+            font: { size: 11 }
+          },
+          grid: {
+            color: "rgba(255, 255, 255, 0.1)"
+          }
+        },
+        y: {
+          ticks: {
+            color: "#d0d0d0",
+            font: { size: 11, weight: "600" }
+          },
+          grid: {
+            display: false
+          }
         }
       }
     }
@@ -1181,58 +1239,210 @@ async function loadMaterials() {
     loadMaterialCategories();
     renderMaterials("all");
     
-    // Setup warehouse tabs for stock monitoring
-    setupWarehouseTabs();
-    // Render stock monitoring table and set up filters
-    renderStockMonitoring("");
-    setupStockMonitoringFilters();
+    // Setup warehouse filter dropdown for stock monitoring
+    setupWarehouseFilter();
   } catch (err) {
     console.error("Error loading materials:", err);
   }
 }
 
-// Setup warehouse tabs for stock monitoring
-function setupWarehouseTabs() {
-  const tabsContainer = document.getElementById("warehouseTabs");
-  if (!tabsContainer) {
-    console.error("Tabs container not found");
-    return;
+// Setup warehouse filter dropdown for stock monitoring
+function setupWarehouseFilter() {
+  const warehouseFilter = document.getElementById("warehouseFilter");
+  if (!warehouseFilter) return;
+  
+  // Populate dropdown with warehouses (projects)
+  warehouseFilter.innerHTML = '<option value="all">All Projects</option>';
+  if (allWarehouses && allWarehouses.length > 0) {
+    allWarehouses.forEach(wh => {
+      const option = document.createElement("option");
+      option.value = wh.id;
+      option.textContent = `${wh.name} (${wh.projectId || wh.id})`;
+      warehouseFilter.appendChild(option);
+    });
   }
   
-  console.log("Setting up warehouse tabs. Current user:", currentUser);
-  console.log("All warehouses:", allWarehouses);
+  // Set up change event listener
+  warehouseFilter.addEventListener("change", (e) => {
+    const selectedWarehouse = e.target.value;
+    renderStockMonitoring(selectedWarehouse);
+    updateMaterialSummaries(selectedWarehouse);
+  });
   
-  // Clear existing tabs
-  tabsContainer.innerHTML = '';
-  
-  // For warehouse staff, only show their assigned warehouse
-  if (currentUser?.role === "warehouse_staff" && currentUser?.warehouse) {
-    const wh = allWarehouses.find(w => w.id === currentUser.warehouse);
-    console.log("Found warehouse for staff:", wh);
-    if (wh) {
-      tabsContainer.innerHTML = `<button class="tab active" data-warehouse="${wh.id}">${wh.name}</button>`;
-    } else {
-      console.warn("Warehouse not found for staff");
-    }
-  } else {
-    // For admin/non-staff, show all warehouses
-    console.log("Setting up tabs for admin/all warehouses");
-    tabsContainer.innerHTML = '<button class="tab active" data-warehouse="all">All</button>';
-    if (allWarehouses && allWarehouses.length > 0) {
-      allWarehouses.forEach(wh => {
-        const btn = document.createElement("button");
-        btn.className = "tab";
-        btn.dataset.warehouse = wh.id;
-        btn.textContent = wh.name;
-        tabsContainer.appendChild(btn);
-      });
-    } else {
-      console.warn("No warehouses found");
-    }
-  }
-  
-  console.log("Tabs HTML after setup:", tabsContainer.innerHTML);
+  // Initial render
+  renderStockMonitoring("all");
+  setupStockMonitoringFilters();
 }
+
+// Update Near to Expire count
+function updateNearExpireCount(warehouse = "all") {
+  try {
+    const nearExpireItems = allMaterials.filter(item => {
+      const qty = parseInt(item.quantity || 0);
+      if (qty === 0) return false;
+      
+      if (!item.itemCode || !item.material) return false;
+      if (!item.warehouse) return false;
+      
+      // Filter by warehouse if not "all"
+      if (warehouse !== "all" && item.warehouse !== warehouse) {
+        return false;
+      }
+      
+      if (!item.expiryDate) return false;
+      
+      try {
+        const expiryDate = new Date(item.expiryDate);
+        const today = new Date();
+        
+        today.setHours(0, 0, 0, 0);
+        expiryDate.setHours(0, 0, 0, 0);
+        
+        const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
+        const nearExpiryThresholdDays = Math.ceil((item.agingDays || 90) * 0.30);
+        return daysUntilExpiry <= nearExpiryThresholdDays;
+      } catch (e) {
+        return false;
+      }
+    }).length;
+    
+    document.getElementById("matNearExpire") && (document.getElementById("matNearExpire").textContent = nearExpireItems);
+    
+    return nearExpireItems;
+  } catch (err) {
+    console.error("Error updating near-to-expire count:", err);
+    return 0;
+  }
+}
+
+// Open Low Stock Modal
+window.openLowStockModal = function() {
+  // Get currently selected warehouse from dropdown
+  const warehouseFilterSelect = document.getElementById("warehouseFilter");
+  const selectedWarehouse = warehouseFilterSelect ? warehouseFilterSelect.value : "all";
+  
+  const lowStockItems = allMaterials.filter(item => {
+    const qty = parseInt(item.quantity || 0);
+    const minQty = parseInt(item.minimumQuantity) || 10;
+    
+    if (!item.itemCode || !item.material || !item.warehouse || qty === 0) return false;
+    
+    // Filter by selected warehouse if not "all"
+    if (selectedWarehouse !== "all" && item.warehouse !== selectedWarehouse) {
+      return false;
+    }
+    
+    return qty <= minQty;
+  });
+
+  const modal = document.createElement("div");
+  modal.style.cssText = `
+    position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);
+    backdrop-filter:blur(3px);z-index:3000;display:flex;align-items:center;justify-content:center;
+  `;
+
+  let itemsHTML = "";
+  if (lowStockItems.length === 0) {
+    itemsHTML = '<p style="color:#0a9b03;text-align:center;padding:20px;">✓ All items have sufficient stock!</p>';
+  } else {
+    itemsHTML = lowStockItems.map(item => `
+      <div style="padding:12px;border-bottom:1px solid rgba(255,107,107,0.2);border-left:4px solid #ff6b6b;">
+        <div style="color:#ffffff;font-weight:600;margin-bottom:4px;">${item.itemCode} - ${item.material || "N/A"}</div>
+        <div style="color:#a0a0a0;font-size:12px;">
+          Current: <span style="color:#ff6b6b;font-weight:600;">${item.quantity || 0}</span> / Min: ${item.minimumQuantity || 0}
+        </div>
+      </div>
+    `).join("");
+  }
+
+  modal.innerHTML = `
+    <div style="background:#1a2332;border-radius:8px;padding:30px;width:90%;max-width:800px;max-height:80vh;overflow-y:auto;color:#e0e0e0;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <h2 style="margin:0 0 20px 0;color:#ff6b6b;font-size:20px;">⚠️ Low Stock Items</h2>
+      <p style="color:#a0a0a0;margin:0 0 15px 0;">Total: ${lowStockItems.length} items below minimum quantity</p>
+      <div style="background:rgba(255,0,0,.05);border:1px solid rgba(255,0,0,.2);border-radius:6px;padding:15px;">
+        ${itemsHTML}
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button id="closeLowStockModal" style="background:rgba(10,155,3,0.2);color:#0a9b03;border:1px solid rgba(10,155,3,0.4);padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;">Close</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+  document.getElementById("closeLowStockModal").onclick = () => modal.remove();
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+};
+
+// Open Near to Expire Modal
+window.openNearExpireModal = function() {
+  const nearExpireItems = allMaterials.filter(item => {
+    const qty = parseInt(item.quantity || 0);
+    if (qty === 0) return false;
+    
+    if (!item.itemCode || !item.material) return false;
+    if (!item.warehouse) return false;
+    if (!item.expiryDate) return false;
+    
+    try {
+      const expiryDate = new Date(item.expiryDate);
+      const today = new Date();
+      
+      today.setHours(0, 0, 0, 0);
+      expiryDate.setHours(0, 0, 0, 0);
+      
+      const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
+      const nearExpiryThresholdDays = Math.ceil((item.agingDays || 90) * 0.30);
+      return daysUntilExpiry <= nearExpiryThresholdDays;
+    } catch (e) {
+      return false;
+    }
+  });
+
+  const modal = document.createElement("div");
+  modal.style.cssText = `
+    position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);
+    backdrop-filter:blur(3px);z-index:3000;display:flex;align-items:center;justify-content:center;
+  `;
+
+  let itemsHTML = "";
+  if (nearExpireItems.length === 0) {
+    itemsHTML = '<p style="color:#0a9b03;text-align:center;padding:20px;">✓ No items near expiry!</p>';
+  } else {
+    itemsHTML = nearExpireItems.map(item => {
+      const expiryDate = new Date(item.expiryDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      expiryDate.setHours(0, 0, 0, 0);
+      const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
+      
+      return `
+        <div style="padding:12px;border-bottom:1px solid rgba(255,152,0,0.2);border-left:4px solid #ff9800;">
+          <div style="color:#ffffff;font-weight:600;margin-bottom:4px;">${item.itemCode} - ${item.material || "N/A"}</div>
+          <div style="color:#a0a0a0;font-size:12px;">
+            Expiry: <span style="color:#ff9800;font-weight:600;">${expiryDate.toLocaleDateString()}</span> (${daysUntilExpiry} days remaining)
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  modal.innerHTML = `
+    <div style="background:#1a2332;border-radius:8px;padding:30px;width:90%;max-width:800px;max-height:80vh;overflow-y:auto;color:#e0e0e0;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <h2 style="margin:0 0 20px 0;color:#ff9800;font-size:20px;">⏰ Near to Expire Items</h2>
+      <p style="color:#a0a0a0;margin:0 0 15px 0;">Total: ${nearExpireItems.length} items expiring within 30% of shelf life</p>
+      <div style="background:rgba(255,152,0,.05);border:1px solid rgba(255,152,0,.2);border-radius:6px;padding:15px;">
+        ${itemsHTML}
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button id="closeNearExpireModal" style="background:rgba(10,155,3,0.2);color:#0a9b03;border:1px solid rgba(10,155,3,0.4);padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;">Close</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+  document.getElementById("closeNearExpireModal").onclick = () => modal.remove();
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+};
 
 // Setup event listeners for stock monitoring filters
 function setupStockMonitoringFilters() {
@@ -1250,6 +1460,36 @@ function setupStockMonitoringFilters() {
       renderStockMonitoring("");
     });
   }
+  
+  // Setup More button dropdown
+  if (document.getElementById("moreMaterialBtn")) {
+    document.getElementById("moreMaterialBtn").onclick = () => {
+      const dropdown = document.getElementById("moreMaterialDropdown");
+      dropdown.style.display = dropdown.style.display === "none" ? "flex" : "none";
+      dropdown.style.flexDirection = "column";
+    };
+  }
+
+  if (document.getElementById("configureColumnOption")) {
+    document.getElementById("configureColumnOption").onclick = () => {
+      showAlert("Column configuration is not yet available for warehouse staff", "info");
+    };
+  }
+
+  if (document.getElementById("exportMaterialOption")) {
+    document.getElementById("exportMaterialOption").onclick = () => {
+      showAlert("Export feature is not yet available for warehouse staff", "info");
+    };
+  }
+  
+  // Close dropdown when clicking outside
+  document.addEventListener("click", (e) => {
+    const dropdown = document.getElementById("moreMaterialDropdown");
+    const btn = document.getElementById("moreMaterialBtn");
+    if (dropdown && btn && !dropdown.contains(e.target) && !btn.contains(e.target)) {
+      dropdown.style.display = "none";
+    }
+  });
 }
 
 function loadMaterialCategories() {
@@ -1366,7 +1606,8 @@ function renderMRTable() {
           <span style="background:${statusColor}33;color:${statusColor};padding:4px 8px;border-radius:4px;font-weight:600;">${mr.status}</span>
         </td>
         <td style="padding:10px;text-align:center;">
-          <button onclick="window.viewMRItems('${mr.id}')" style="background:#0a9b03;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;">View Items</button>
+          <button onclick="window.viewMRItems('${mr.id}')" style="background:#0a9b03;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;margin-right:5px;">View Items</button>
+          ${mr.type === "borrow" && mr.status === "Approved" ? `<button style="background:#1dd1a1;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600;" onclick="window.openReceiveBorrowModal('${mr.id}')">Receive</button>` : ""}
         </td>
       </tr>
     `;
@@ -1438,7 +1679,7 @@ window.viewMRItems = function(mrId) {
   `;
   
   const content = `
-    <div style="background:#1a2332;border-radius:8px;padding:30px;max-width:800px;width:90%;max-height:80vh;overflow-y:auto;color:#e0e0e0;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+    <div style="background:#1a2332;border-radius:8px;padding:30px;max-width:1200px;width:95%;max-height:85vh;overflow-y:auto;color:#e0e0e0;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
       <h2 style="margin:0 0 20px 0;color:#0a9b03;">Material Request Details</h2>
       
       <div style="background:rgba(10,155,3,0.08);border:1px solid rgba(10,155,3,0.3);border-radius:8px;padding:15px;margin-bottom:20px;">
@@ -1501,6 +1742,299 @@ window.deleteMRFromWarehouse = async function(mrId, mrNo) {
     } catch (err) {
       showAlert("❌ Error deleting MR: " + err.message, "error");
     }
+  }
+};
+
+window.openReceiveBorrowModal = async function(mrId) {
+  try {
+    // Get the material request document
+    const mrSnap = await getDoc(doc(db, "materialRequests", mrId));
+    if (!mrSnap.exists()) {
+      showAlert("❌ Material request not found", "error");
+      return;
+    }
+    
+    const mr = { id: mrSnap.id, ...mrSnap.data() };
+    
+    // Format the date properly from Firestore timestamp
+    let mrDate = "Invalid Date";
+    if (mr.createdAt) {
+      try {
+        const dateObj = mr.createdAt.toDate ? mr.createdAt.toDate() : new Date(mr.createdAt);
+        mrDate = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+      } catch (e) {
+        mrDate = "Invalid Date";
+      }
+    }
+    
+    // Verify it's an approved borrow request
+    if (mr.type !== "borrow" || mr.status !== "Approved") {
+      showAlert("❌ This material request is not approved for receipt", "error");
+      return;
+    }
+    
+    // Get source and target warehouse names
+    const sourceWh = allWarehouses.find(w => w.id === mr.sourceWarehouseId);
+    const targetWh = allWarehouses.find(w => w.id === mr.borrowWarehouseId);
+    
+    const sourceName = sourceWh?.name || mr.sourceWarehouseId || "Unknown";
+    const targetName = targetWh?.name || mr.borrowWarehouseId || "Unknown";
+    
+    // Build items list
+    let itemsHTML = "";
+    if (mr.items && mr.items.length > 0) {
+      itemsHTML = `
+        <table style="width:100%;border-collapse:collapse;margin-top:15px;">
+          <thead style="border-bottom:2px solid rgba(10,155,3,.3);">
+            <tr>
+              <th style="padding:10px;text-align:left;color:#0a9b03;">Item Code</th>
+              <th style="padding:10px;text-align:left;color:#0a9b03;">Material</th>
+              <th style="padding:10px;text-align:center;color:#0a9b03;">Qty</th>
+              <th style="padding:10px;text-align:left;color:#0a9b03;">Unit</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      mr.items.forEach(item => {
+        itemsHTML += `
+          <tr style="border-bottom:1px solid rgba(10,155,3,.1);">
+            <td style="padding:10px;color:#d0d0d0;">${item.itemCode || "-"}</td>
+            <td style="padding:10px;color:#d0d0d0;">${item.material || item.materialName || "-"}</td>
+            <td style="padding:10px;text-align:center;color:#d0d0d0;font-weight:600;">${item.quantity}</td>
+            <td style="padding:10px;color:#d0d0d0;">${item.unit || "unit"}</td>
+          </tr>
+        `;
+      });
+      
+      itemsHTML += `
+          </tbody>
+        </table>
+      `;
+    }
+    
+    // Create modal
+    const backdropId = "receiveBorrowBackdrop";
+    const modalId = "receiveBorrowModal";
+    
+    // Remove old modal if exists
+    const oldBackdrop = document.getElementById(backdropId);
+    const oldModal = document.getElementById(modalId);
+    if (oldBackdrop) oldBackdrop.remove();
+    if (oldModal) oldModal.remove();
+    
+    // Create backdrop
+    const backdrop = document.createElement("div");
+    backdrop.id = backdropId;
+    backdrop.style.cssText = `
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,0.6);
+      z-index:4999;
+    `;
+    backdrop.onclick = () => {
+      backdrop.remove();
+      document.getElementById(modalId)?.remove();
+    };
+    document.body.appendChild(backdrop);
+    
+    // Create modal
+    const modal = document.createElement("div");
+    modal.id = modalId;
+    modal.style.cssText = `
+      position:fixed;
+      top:50%;
+      left:50%;
+      transform:translate(-50%,-50%);
+      background:linear-gradient(135deg,#1a3a52 0%,#0f1419 100%);
+      border:2px solid rgba(10,155,3,.4);
+      border-radius:12px;
+      padding:30px;
+      z-index:5000;
+      max-width:600px;
+      width:90%;
+      max-height:80vh;
+      overflow-y:auto;
+      color:#e0e0e0;
+      box-shadow:0 10px 40px rgba(0,0,0,0.5);
+    `;
+    
+    modal.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <h2 style="margin:0;color:#0a9b03;font-size:20px;">Receive Borrowed Materials</h2>
+        <button onclick="document.getElementById('${backdropId}').onclick()" style="background:none;border:none;color:#ff6b6b;font-size:24px;cursor:pointer;padding:0;width:30px;height:30px;">×</button>
+      </div>
+      
+      <div style="background:rgba(10,155,3,.1);padding:15px;border-radius:8px;margin-bottom:20px;border-left:4px solid #0a9b03;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+          <div>
+            <label style="color:#a0a0a0;font-size:11px;text-transform:uppercase;display:block;margin-bottom:5px;">Source Warehouse</label>
+            <div style="color:#0a9b03;font-weight:600;font-size:14px;padding:8px;background:rgba(10,155,3,.15);border-radius:4px;">${sourceName}</div>
+          </div>
+          <div>
+            <label style="color:#a0a0a0;font-size:11px;text-transform:uppercase;display:block;margin-bottom:5px;">Receiving Warehouse</label>
+            <div style="color:#0a9b03;font-weight:600;font-size:14px;padding:8px;background:rgba(10,155,3,.15);border-radius:4px;">${targetName}</div>
+          </div>
+          <div>
+            <label style="color:#a0a0a0;font-size:11px;text-transform:uppercase;display:block;margin-bottom:5px;">MR Number</label>
+            <div style="color:#d0d0d0;font-weight:600;font-size:14px;">${mr.mrNo}</div>
+          </div>
+          <div>
+            <label style="color:#a0a0a0;font-size:11px;text-transform:uppercase;display:block;margin-bottom:5px;">Date</label>
+            <div style="color:#d0d0d0;font-size:14px;">${mrDate}</div>
+          </div>
+        </div>
+      </div>
+      
+      <div>
+        <h3 style="color:#0a9b03;font-size:14px;margin:15px 0 10px;text-transform:uppercase;">📦 Items to Receive</h3>
+        ${itemsHTML}
+      </div>
+      
+      <div style="background:rgba(255,215,0,.1);padding:15px;border-radius:8px;margin-top:20px;border-left:4px solid #ffd700;">
+        <p style="color:#ffd700;font-weight:600;margin:0 0 10px;font-size:12px;">⚠️ By confirming receipt:</p>
+        <ul style="color:#d0d0d0;font-size:12px;margin:0;padding-left:20px;line-height:1.6;">
+          <li>Materials will be removed from <strong>${sourceName}</strong></li>
+          <li>Materials will be added to <strong>${targetName}</strong></li>
+          <li>A Delivery Receipt (DR) will be created</li>
+          <li>This action cannot be undone</li>
+        </ul>
+      </div>
+      
+      <div style="display:flex;gap:10px;margin-top:25px;">
+        <button onclick="document.getElementById('${backdropId}').onclick()" style="flex:1;background:rgba(160,160,160,.2);color:#a0a0a0;border:1px solid rgba(160,160,160,.4);padding:12px;border-radius:6px;cursor:pointer;font-weight:600;transition:all 0.3s;font-size:13px;" onmouseover="this.style.background='rgba(160,160,160,.3)'" onmouseout="this.style.background='rgba(160,160,160,.2)'">
+          Cancel
+        </button>
+        <button onclick="window.confirmReceiveBorrowMaterials('${mr.id}')" style="flex:1;background:#1dd1a1;color:white;border:none;padding:12px;border-radius:6px;cursor:pointer;font-weight:600;transition:all 0.3s;font-size:13px;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+          ✓ Confirm Receipt
+        </button>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+  } catch (err) {
+    console.error("Error opening receive borrow modal:", err);
+    showAlert("❌ Error loading borrow request details: " + err.message, "error");
+  }
+};
+
+window.confirmReceiveBorrowMaterials = async function(mrId) {
+  try {
+    showAlert("⏳ Processing receipt...", "success");
+    
+    // Get the material request
+    const mrSnap = await getDoc(doc(db, "materialRequests", mrId));
+    if (!mrSnap.exists()) {
+      showAlert("❌ Material request not found", "error");
+      return;
+    }
+    
+    const mr = { id: mrSnap.id, ...mrSnap.data() };
+    const sourceWarehouseId = mr.sourceWarehouseId;
+    const targetWarehouseId = mr.borrowWarehouseId;
+    
+    // For each item in the MR, deduct from source warehouse and add to target warehouse
+    if (mr.items && mr.items.length > 0) {
+      for (const mrItem of mr.items) {
+        try {
+          // Find the material in the source warehouse
+          const sourceMatSnap = await getDocs(query(
+            collection(db, "materials"),
+            where("warehouse", "==", sourceWarehouseId),
+            where("itemCode", "==", mrItem.itemCode),
+            where("material", "==", mrItem.material)
+          ));
+          
+          if (!sourceMatSnap.empty) {
+            const sourceMat = sourceMatSnap.docs[0];
+            const sourceData = sourceMat.data();
+            const currentQty = parseInt(sourceData.quantity || 0);
+            const newQty = Math.max(0, currentQty - mrItem.quantity);
+            
+            // Update source warehouse quantity
+            await updateDoc(sourceMat.ref, {
+              quantity: newQty
+            });
+            
+            console.log(`✓ Deducted ${mrItem.quantity} units from source warehouse (${sourceWarehouseId})`);
+          }
+          
+          // Find or create material in target warehouse
+          const targetMatSnap = await getDocs(query(
+            collection(db, "materials"),
+            where("warehouse", "==", targetWarehouseId),
+            where("itemCode", "==", mrItem.itemCode),
+            where("material", "==", mrItem.material)
+          ));
+          
+          if (!targetMatSnap.empty) {
+            // Material exists in target warehouse - add quantity
+            const targetMat = targetMatSnap.docs[0];
+            const targetData = targetMat.data();
+            const currentQty = parseInt(targetData.quantity || 0);
+            const newQty = currentQty + mrItem.quantity;
+            
+            await updateDoc(targetMat.ref, {
+              quantity: newQty
+            });
+            
+            console.log(`✓ Added ${mrItem.quantity} units to target warehouse (${targetWarehouseId})`);
+          } else {
+            // Material doesn't exist in target warehouse - create new record
+            // Copy the source material record to target warehouse
+            const sourceMatSnap2 = await getDocs(query(
+              collection(db, "materials"),
+              where("warehouse", "==", sourceWarehouseId),
+              where("itemCode", "==", mrItem.itemCode),
+              where("material", "==", mrItem.material)
+            ));
+            
+            if (!sourceMatSnap2.empty) {
+              const sourceData = sourceMatSnap2.docs[0].data();
+              
+              // Create new material record in target warehouse
+              await addDoc(collection(db, "materials"), {
+                ...sourceData,
+                warehouse: targetWarehouseId,
+                quantity: mrItem.quantity,
+                createdAt: new Date().toISOString(),
+                borrowedFrom: sourceWarehouseId,
+                borrowNote: `Borrowed from ${sourceWarehouseId}`
+              });
+              
+              console.log(`✓ Created new material record in target warehouse (${targetWarehouseId})`);
+            }
+          }
+          
+        } catch (itemErr) {
+          console.error(`Error processing item ${mrItem.material}:`, itemErr);
+        }
+      }
+    }
+    
+    // Update MR status to "Delivered"
+    await updateDoc(doc(db, "materialRequests", mrId), {
+      status: "Delivered",
+      receivedAt: new Date().toISOString(),
+      receivedBy: currentUser?.name || currentUser?.email || "Unknown"
+    });
+    
+    await logActivity("borrow_receipt", "received", `Received borrowed materials - MR: ${mr.mrNo}`);
+    
+    showAlert(`✅ Materials received successfully!`, "success");
+    
+    // Close modal
+    const backdrop = document.getElementById("receiveBorrowBackdrop");
+    const modal = document.getElementById("receiveBorrowModal");
+    if (backdrop) backdrop.remove();
+    if (modal) modal.remove();
+    
+    // Reload MR table
+    await loadMaterialRequests();
+    
+  } catch (err) {
+    console.error("Error confirming receipt:", err);
+    showAlert("❌ Error completing receipt: " + err.message, "error");
   }
 };
 
@@ -2681,11 +3215,26 @@ if (document.getElementById("mrAddMaterialSelect")) {
       return;
     }
     
+    // Check if borrowing - only show materials from selected borrow warehouse
+    const mrTypeSelect = document.getElementById("mrType");
+    const borrowSelect = document.getElementById("mrBorrowFromWarehouse");
+    const isBorrow = mrTypeSelect?.value === "borrow";
+    const selectedBorrowWarehouse = borrowSelect?.value;
+    
     const filtered = (allMaterials || []).filter(mat => {
       const matName = (mat.material || mat.materialName || mat.name || "").toLowerCase();
       const spec = (mat.specification || mat.specs || "").toLowerCase();
       const brand = (mat.brand || "").toLowerCase();
-      return matName.includes(searchText) || spec.includes(searchText) || brand.includes(searchText);
+      
+      // Check text match
+      const textMatch = matName.includes(searchText) || spec.includes(searchText) || brand.includes(searchText);
+      
+      // If borrowing, only show materials from selected warehouse
+      if (isBorrow && selectedBorrowWarehouse) {
+        return textMatch && mat.warehouse === selectedBorrowWarehouse;
+      }
+      
+      return textMatch;
     });
     
     if (filtered.length > 0) {
@@ -2694,9 +3243,20 @@ if (document.getElementById("mrAddMaterialSelect")) {
         const spec = mat.specification || mat.specs || "-";
         const brand = mat.brand || "-";
         const cost = parseFloat(mat.cost || mat.unitPrice || mat.price || 0);
+        const availableStock = parseInt(mat.quantity || 0);
+        
+        // Get stock info if borrowing
+        let stockInfo = "";
+        const mrTypeSelect = document.getElementById("mrType");
+        const isBorrow = mrTypeSelect?.value === "borrow";
+        if (isBorrow) {
+          const stockColor = availableStock > 0 ? "#0a9b03" : "#ff6b6b";
+          stockInfo = `<div style="font-size:11px;color:${stockColor};margin-top:5px;font-weight:600;">Available Stock: ${availableStock} ${mat.unit || "PCS"}</div>`;
+        }
+        
         const div = document.createElement("div");
         div.style.cssText = "padding:10px;border-bottom:1px solid rgba(10,155,3,.2);cursor:pointer;color:#e0e0e0;font-size:12px;";
-        div.innerHTML = `<div style="font-weight:600;color:#0a9b03;">${matName}</div><div style="font-size:11px;color:#a0a0a0;">Spec: ${spec} | Brand: ${brand}</div><div style="font-size:11px;color:#1dd1a1;margin-top:5px;">Cost: ₱${cost.toLocaleString('en-US', {minimumFractionDigits:2})}</div>`;
+        div.innerHTML = `<div style="font-weight:600;color:#0a9b03;">${matName}</div><div style="font-size:11px;color:#a0a0a0;">Spec: ${spec} | Brand: ${brand}</div><div style="font-size:11px;color:#1dd1a1;margin-top:5px;">Cost: ₱${cost.toLocaleString('en-US', {minimumFractionDigits:2})}</div>${stockInfo}`;
         div.onmouseover = function() { this.style.background = "rgba(10,155,3,.15)"; };
         div.onmouseout = function() { this.style.background = "transparent"; };
         div.onclick = function() {
@@ -2709,7 +3269,9 @@ if (document.getElementById("mrAddMaterialSelect")) {
             brand: brand,
             unit: mat.unit || "",
             itemCode: mat.itemCode || mat.code || "",
-            cost: cost
+            cost: cost,
+            availableStock: availableStock,
+            sourceWarehouseId: mat.warehouse
           });
           materialDropdown.style.display = "none";
         };
@@ -2752,9 +3314,31 @@ if (document.getElementById("mrType")) {
             borrowSelect.appendChild(option);
           }
         });
+        
+        // Add change listener to clear material input when warehouse selection changes
+        borrowSelect.onchange = function() {
+          const materialInput = document.getElementById("mrAddMaterialSelect");
+          const materialDropdown = document.getElementById("mrMaterialDropdown");
+          
+          if (materialInput) {
+            materialInput.value = "";
+            materialInput.dataset.selectedId = "";
+            materialInput.dataset.selectedMat = "";
+          }
+          if (materialDropdown) {
+            materialDropdown.style.display = "none";
+            materialDropdown.innerHTML = "";
+          }
+        };
       }
     } else {
       borrowDiv.style.display = "none";
+      
+      // Clear borrow warehouse when switching away from borrow
+      if (borrowSelect) {
+        borrowSelect.value = "";
+        borrowSelect.onchange = null;
+      }
     }
   };
 }
@@ -2768,6 +3352,14 @@ if (addMRItemBtn) {
   addMRItemBtn.onclick = () => {
     const materialInput = document.getElementById("mrAddMaterialSelect");
     const qtyInput = document.getElementById("mrAddQty");
+    const mrTypeSelect = document.getElementById("mrType");
+    const borrowSelect = document.getElementById("mrBorrowFromWarehouse");
+    
+    // Validate borrow warehouse selection if borrowing
+    if (mrTypeSelect?.value === "borrow" && !borrowSelect?.value) {
+      showAlert("Please select a source warehouse to borrow from", "error");
+      return;
+    }
     
     if (!materialInput.value) {
       showAlert("Please select a material", "error");
@@ -2788,10 +3380,13 @@ if (addMRItemBtn) {
       brand: "-",
       unit: "",
       itemCode: "",
-      cost: 0
+      cost: 0,
+      sourceWarehouseId: null
     };
     
-    currentMRItems.push({
+    const isBorrow = mrTypeSelect?.value === "borrow";
+    
+    const item = {
       materialId: matData.id,
       itemCode: matData.itemCode,
       material: matData.material,
@@ -2800,7 +3395,14 @@ if (addMRItemBtn) {
       quantity: qty,
       unit: matData.unit || "PCS",
       cost: matData.cost
-    });
+    };
+    
+    // Add source warehouse for borrow requests
+    if (isBorrow && matData.sourceWarehouseId) {
+      item.sourceWarehouseId = matData.sourceWarehouseId;
+    }
+    
+    currentMRItems.push(item);
     
     renderMRItemsDisplay();
     materialInput.value = "";
@@ -2832,10 +3434,8 @@ if (mrForm) {
       }
       const mrType = mrTypeSelect.value;
       
-      // Get next MR number
-      const defaultMRSnap = await getDocs(collection(db, "materialRequests"));
-      const mrNumber = (defaultMRSnap.size + 1).toString().padStart(3, "0");
-      const mrNo = `MR${mrNumber}`;
+      // Get next MR number (synced with main dashboard)
+      const mrNo = await getNextMRNumber();
       
       // Get warehouse (already selected/validated)
       const selectedWarehouseId = mrWarehouseInput.value;
@@ -2863,14 +3463,17 @@ if (mrForm) {
         warehouse: selectedWarehouseId,
         warehouseName: warehouseName,
         items: currentMRItems,
-        status: "Pending",
-        borrowWarehouseId: borrowWarehouseId,
+        status: mrType === "borrow" ? "Pending_Approval" : "Pending",
+        sourceWarehouseId: mrType === "borrow" ? borrowWarehouseId : null,
+        borrowWarehouseId: mrType === "borrow" ? selectedWarehouseId : null,
         createdAt: serverTimestamp(),
         createdBy: currentUser?.name || currentUser?.email || "Unknown"
       };
       
       await addDoc(collection(db, "materialRequests"), mrData);
       await logActivity("materialRequest", "create", `Created MR: ${mrNo}`);
+      
+      // NOTE: Stock deduction for borrow requests now happens in dashboard when admin approves
       
       showAlert(`✅ Material Request ${mrNo} created successfully!`, "success");
       mrModal.style.display = "none";
