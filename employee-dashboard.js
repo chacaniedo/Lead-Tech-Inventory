@@ -1,7 +1,7 @@
 // Employee Dashboard Module Navigation
 
 import { db, auth } from './firebase.js';
-import { collection, getDocs, doc, getDoc, updateDoc, query, where, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { collection, getDocs, doc, getDoc, updateDoc, setDoc, query, where, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { onAuthStateChanged, signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
 // Helper: Safe activity logging (graceful fallback if admin-dashboard not available)
@@ -880,69 +880,53 @@ async function loadMonthlyStats() {
         if (!user) return;
 
         const now = new Date();
-        const nowLocalStr = localDateToYMD(now);
+        const userCreatedAt = await getUserCreatedAtDate();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const rangeStart = userCreatedAt > monthStart ? userCreatedAt : monthStart;
+        const rangeEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-        const attendanceRef = collection(db, 'attendance');
-        const q = query(attendanceRef,
-            where('userId', '==', user.uid)
-        );
+        if (rangeStart > rangeEnd) {
+            document.getElementById('dashboardPresentDays').textContent = '0';
+            document.getElementById('dashboardAbsentDays').textContent = '0';
+            document.getElementById('dashboardLateDays').textContent = '0';
+            document.getElementById('dashboardTotalHours').textContent = '0h';
+            return;
+        }
 
-        const snapshot = await getDocs(q);
-        
-        const presentDates = new Set();
+        const allRecords = await fetchCurrentUserAttendanceRecords();
+        const monthlyRecords = buildComputedDailyRecords(allRecords, rangeStart, rangeEnd, userCreatedAt);
+
+        let presentDays = 0;
+        let absentDays = 0;
         let lateDays = 0;
         let totalMinutes = 0;
 
-        const lastCheckStr = localDateToYMD(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+        monthlyRecords.forEach((data) => {
+            if (data.clockIn) {
+                presentDays++;
 
-        function getRecordDateStr(data) {
-            if (typeof data.date === 'string' && data.date.length === 10) return data.date;
-            if (typeof data.date === 'string') return localDateToYMD(new Date(data.date));
-            if (data.timestamp) return localDateToYMD(data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp));
-            return null;
-        }
-
-        const absentDates = new Set();
-
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            const recordDateStr = getRecordDateStr(data);
-            if (!recordDateStr) return;
-
-            if (recordDateStr.slice(0,7) === nowLocalStr.slice(0,7) && recordDateStr <= lastCheckStr) {
-                const dateStr = recordDateStr;
-                
-                if (data.isAbsent || data.status === 'Absent') {
-                    absentDates.add(dateStr);
-                }
-                
-                if (data.clockIn) {
-                    presentDates.add(dateStr);
-
-                    if (data.clockOut) {
-                        try {
-                            const hoursData = calculateHoursWorked(data.clockIn, data.clockOut, data.lunchOut, data.lunchIn);
-                            if (hoursData && hoursData.totalMinutes) {
-                                totalMinutes += hoursData.totalMinutes;
-                            }
-                        } catch (e) {
-                            if (typeof data.hoursWorked === 'number' && data.hoursWorked > 0) {
-                                totalMinutes += data.hoursWorked;
-                            }
+                if (data.clockOut) {
+                    try {
+                        const hoursData = calculateHoursWorked(data.clockIn, data.clockOut, data.lunchOut, data.lunchIn);
+                        if (hoursData && hoursData.totalMinutes) {
+                            totalMinutes += hoursData.totalMinutes;
                         }
-                    } else if (typeof data.hoursWorked === 'number' && data.hoursWorked > 0) {
-                        totalMinutes += data.hoursWorked;
+                    } catch (e) {
+                        if (typeof data.hoursWorked === 'number' && data.hoursWorked > 0) {
+                            totalMinutes += data.hoursWorked;
+                        }
                     }
+                } else if (typeof data.hoursWorked === 'number' && data.hoursWorked > 0) {
+                    totalMinutes += data.hoursWorked;
                 }
 
-                if (data.isLate) {
+                if (data.isLate || data.status === 'Late') {
                     lateDays++;
                 }
+            } else {
+                absentDays++;
             }
         });
-
-        const presentDays = presentDates.size;
-        const absentDays = absentDates.size;
 
         document.getElementById('dashboardPresentDays').textContent = presentDays;
         document.getElementById('dashboardAbsentDays').textContent = absentDays;
@@ -1196,6 +1180,18 @@ async function loadAnnouncements() {
             } else {
                 date = new Date();
             }
+
+            let updatedDate = null;
+            if (announcement.updatedAt) {
+                updatedDate = announcement.updatedAt instanceof Date
+                    ? announcement.updatedAt
+                    : (announcement.updatedAt.toDate?.() || new Date(announcement.updatedAt));
+                if (isNaN(updatedDate.getTime())) {
+                    updatedDate = null;
+                }
+            }
+
+            const isEdited = !!updatedDate;
             
             const formattedDate = date.toLocaleDateString('en-US', {
                 year: 'numeric',
@@ -1203,10 +1199,23 @@ async function loadAnnouncements() {
                 day: 'numeric'
             });
 
+            const formattedUpdatedDate = updatedDate
+                ? updatedDate.toLocaleDateString(undefined, {
+                    year: 'numeric',
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit'
+                })
+                : '';
+
             html += `
                 <div class="announcement-item">
                     <div class="announcement-header">
-                        <h3 class="announcement-title">${announcement.title || 'Announcement'}</h3>
+                        <div class="announcement-title-row">
+                            <h3 class="announcement-title">${announcement.title || 'Announcement'}</h3>
+                            ${isEdited ? '<span class="announcement-edited-badge">EDITED</span>' : ''}
+                        </div>
                     </div>
                     <div>
                         <span class="announcement-category ${category}">${announcement.category || 'General'}</span>
@@ -1214,7 +1223,10 @@ async function loadAnnouncements() {
                     </div>
                     <p class="announcement-text">${announcement.content || announcement.message || ''}</p>
                     <div class="announcement-meta">
-                        <div class="announcement-date">${formattedDate}</div>
+                        <div class="announcement-date">
+                            ${formattedDate}
+                            ${formattedUpdatedDate ? `<span class="announcement-updated">Updated: ${formattedUpdatedDate}</span>` : ''}
+                        </div>
                     </div>
                 </div>
             `;
@@ -3019,24 +3031,53 @@ async function filterRecordsByMonth(monthString) {
 
 async function loadMyProfileData() {
     try {
-        const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
-        if (userDoc.exists()) {
-            const data = userDoc.data();
+        const user = auth.currentUser;
+        if (!user) return;
 
-            if (document.getElementById('fullName')) document.getElementById('fullName').value = data.fullName || '';
-            if (document.getElementById('ltiscTagging')) document.getElementById('ltiscTagging').value = data.ltisc || '';
-            if (document.getElementById('departmentSite')) document.getElementById('departmentSite').value = data.department || '';
-            if (document.getElementById('assignedDesignation')) document.getElementById('assignedDesignation').value = data.designation || '';
-            if (document.getElementById('currentEmail')) document.getElementById('currentEmail').value = data.email || '';
+        const profileInfo = await resolveEmployeeProfileInfo(user.uid);
+        const data = profileInfo.data || {};
 
-            setupProfileEditing(data);
-        }
+        const fullName = data.fullName || data.name || '';
+        const tagging = data.ltisc || data.tagging || '';
+        const department = data.department || data.site || '';
+        const designation = data.designation || '';
+        const email = data.email || user.email || '';
+
+        if (document.getElementById('fullName')) document.getElementById('fullName').value = fullName;
+        if (document.getElementById('ltiscTagging')) document.getElementById('ltiscTagging').value = tagging;
+        if (document.getElementById('departmentSite')) document.getElementById('departmentSite').value = department;
+        if (document.getElementById('assignedDesignation')) document.getElementById('assignedDesignation').value = designation;
+        if (document.getElementById('currentEmail')) document.getElementById('currentEmail').value = email;
+
+        setupProfileEditing();
     } catch (error) {
         console.error('Error loading profile data:', error);
     }
 }
 
-function setupProfileEditing(currentUserData) {
+async function resolveEmployeeProfileInfo(userId) {
+    const collectionsToCheck = ['employees', 'users'];
+
+    for (const collectionName of collectionsToCheck) {
+        try {
+            const profileRef = doc(db, collectionName, userId);
+            const profileSnap = await getDoc(profileRef);
+            if (profileSnap.exists()) {
+                return { ref: profileRef, collection: collectionName, data: profileSnap.data() };
+            }
+        } catch (error) {
+            console.warn(`Error checking ${collectionName}:`, error);
+        }
+    }
+
+    return {
+        ref: doc(db, 'employees', userId),
+        collection: 'employees',
+        data: {}
+    };
+}
+
+function setupProfileEditing() {
     const editProfileBtn = document.getElementById('editProfileBtn');
     const editPasswordBtn = document.getElementById('editPasswordBtn');
     const editProfileModal = document.getElementById('editProfileModal');
@@ -3044,14 +3085,24 @@ function setupProfileEditing(currentUserData) {
     const cancelEditProfileBtn = document.getElementById('cancelEditProfileBtn');
     const editProfileForm = document.getElementById('editProfileForm');
 
-    if (editProfileBtn) {
+    if (editProfileBtn && !editProfileBtn.dataset.bound) {
+        editProfileBtn.dataset.bound = 'true';
         editProfileBtn.addEventListener('click', async function() {
-            document.getElementById('editFullName').value = currentUserData?.fullName || '';
-            document.getElementById('editLtiscTagging').value = currentUserData?.ltisc || '';
-            document.getElementById('editCurrentEmail').value = currentUserData?.email || '';
+            const user = auth.currentUser;
+            if (!user) {
+                await showMessage('Error', 'User session not found. Please login again.');
+                return;
+            }
+
+            const profileInfo = await resolveEmployeeProfileInfo(user.uid);
+            const profileData = profileInfo.data || {};
+
+            document.getElementById('editFullName').value = profileData.fullName || profileData.name || '';
+            document.getElementById('editLtiscTagging').value = profileData.ltisc || profileData.tagging || '';
+            document.getElementById('editCurrentEmail').value = profileData.email || user.email || '';
             
-            await populateDepartmentDropdown(currentUserData?.department || '');
-            await populateDesignationDropdown(currentUserData?.designation || '');
+            await populateDepartmentDropdown(profileData.department || profileData.site || '');
+            await populateDesignationDropdown(profileData.designation || '');
             
             editProfileModal.classList.add('active');
         });
@@ -3116,30 +3167,43 @@ function setupProfileEditing(currentUserData) {
         }
     }
 
-    if (closeEditProfileModal) {
+    if (closeEditProfileModal && !closeEditProfileModal.dataset.bound) {
+        closeEditProfileModal.dataset.bound = 'true';
         closeEditProfileModal.addEventListener('click', function() {
             editProfileModal.classList.remove('active');
         });
     }
 
-    if (cancelEditProfileBtn) {
+    if (cancelEditProfileBtn && !cancelEditProfileBtn.dataset.bound) {
+        cancelEditProfileBtn.dataset.bound = 'true';
         cancelEditProfileBtn.addEventListener('click', function() {
             editProfileModal.classList.remove('active');
         });
     }
 
-    window.addEventListener('click', function(event) {
-        if (event.target === editProfileModal) {
-            editProfileModal.classList.remove('active');
-        }
-    });
+    if (!window.__employeeProfileModalOutsideClickBound) {
+        window.__employeeProfileModalOutsideClickBound = true;
+        window.addEventListener('click', function(event) {
+            if (event.target === editProfileModal) {
+                editProfileModal.classList.remove('active');
+            }
+        });
+    }
 
-    if (editProfileForm) {
+    if (editProfileForm && !editProfileForm.dataset.bound) {
+        editProfileForm.dataset.bound = 'true';
         editProfileForm.addEventListener('submit', async function(e) {
             e.preventDefault();
 
             try {
+                const user = auth.currentUser;
+                if (!user) {
+                    await showMessage('Error', 'User session not found. Please login again.');
+                    return;
+                }
+
                 const updatedName = document.getElementById('editFullName').value;
+                const updatedTagging = document.getElementById('editLtiscTagging').value;
                 const updatedDepartment = document.getElementById('editDepartmentSite').value;
                 const updatedDesignation = document.getElementById('editAssignedDesignation').value;
                 const updatedEmail = document.getElementById('editCurrentEmail').value;
@@ -3149,12 +3213,18 @@ function setupProfileEditing(currentUserData) {
                     return;
                 }
 
-                await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+                const profileInfo = await resolveEmployeeProfileInfo(user.uid);
+                await setDoc(profileInfo.ref, {
                     fullName: updatedName,
+                    name: updatedName,
+                    ltisc: updatedTagging,
+                    tagging: updatedTagging,
                     department: updatedDepartment,
+                    site: updatedDepartment,
                     designation: updatedDesignation,
-                    email: updatedEmail
-                });
+                    email: updatedEmail,
+                    updatedAt: serverTimestamp()
+                }, { merge: true });
 
                 await logActivity('Profile Updated', `Profile updated successfully`, 'success');
 
@@ -3171,7 +3241,8 @@ function setupProfileEditing(currentUserData) {
         });
     }
 
-    if (editPasswordBtn) {
+    if (editPasswordBtn && !editPasswordBtn.dataset.bound) {
+        editPasswordBtn.dataset.bound = 'true';
         const changePasswordModal = document.getElementById('changePasswordModal');
         const closeChangePasswordModal = document.getElementById('closeChangePasswordModal');
         const cancelChangePasswordBtn = document.getElementById('cancelChangePasswordBtn');
@@ -3185,25 +3256,31 @@ function setupProfileEditing(currentUserData) {
             changePasswordModal.classList.add('active');
         });
 
-        if (closeChangePasswordModal) {
+        if (closeChangePasswordModal && !closeChangePasswordModal.dataset.bound) {
+            closeChangePasswordModal.dataset.bound = 'true';
             closeChangePasswordModal.addEventListener('click', function() {
                 changePasswordModal.classList.remove('active');
             });
         }
 
-        if (cancelChangePasswordBtn) {
+        if (cancelChangePasswordBtn && !cancelChangePasswordBtn.dataset.bound) {
+            cancelChangePasswordBtn.dataset.bound = 'true';
             cancelChangePasswordBtn.addEventListener('click', function() {
                 changePasswordModal.classList.remove('active');
             });
         }
 
-        window.addEventListener('click', function(event) {
-            if (event.target === changePasswordModal) {
-                changePasswordModal.classList.remove('active');
-            }
-        });
+        if (!window.__employeePasswordModalOutsideClickBound) {
+            window.__employeePasswordModalOutsideClickBound = true;
+            window.addEventListener('click', function(event) {
+                if (event.target === changePasswordModal) {
+                    changePasswordModal.classList.remove('active');
+                }
+            });
+        }
 
-        if (changePasswordForm) {
+        if (changePasswordForm && !changePasswordForm.dataset.bound) {
+            changePasswordForm.dataset.bound = 'true';
             changePasswordForm.addEventListener('submit', async function(e) {
                 e.preventDefault();
 
@@ -3243,9 +3320,15 @@ function setupProfileEditing(currentUserData) {
                     await reauthenticateWithCredential(user, credential);
                     await updatePassword(user, newPassword);
 
-                    await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-                        tempPassword: newPassword
-                    });
+                    try {
+                        const profileInfo = await resolveEmployeeProfileInfo(user.uid);
+                        await setDoc(profileInfo.ref, {
+                            passwordUpdatedAt: serverTimestamp(),
+                            updatedAt: serverTimestamp()
+                        }, { merge: true });
+                    } catch (profileSaveError) {
+                        console.warn('Password changed in Auth, but profile timestamp update failed:', profileSaveError);
+                    }
 
                     await logActivity('Password Changed', `Password changed successfully`, 'success');
 
@@ -3454,6 +3537,18 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    const syncEmployeeSidebarForViewport = () => {
+        if (!sidebar) return;
+        if (window.innerWidth <= 768) {
+            sidebar.classList.add('mobile-hidden');
+        } else {
+            sidebar.classList.remove('mobile-hidden');
+        }
+    };
+
+    syncEmployeeSidebarForViewport();
+    window.addEventListener('resize', syncEmployeeSidebarForViewport);
+
     navItems.forEach(item => {
         item.addEventListener('click', function(e) {
             e.preventDefault();
@@ -3472,7 +3567,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 moduleContent.classList.add('active');
             }
 
-            sidebar.classList.add('mobile-hidden');
+            if (window.innerWidth <= 768) {
+                sidebar.classList.add('mobile-hidden');
+            }
 
             if (module === 'dashboard') {
                 loadEmployeeWelcome();
