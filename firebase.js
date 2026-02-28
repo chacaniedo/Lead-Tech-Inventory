@@ -46,6 +46,130 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 // ============================================================
+// PERMISSION CHECKING SYSTEM - Global permission validator
+// ============================================================
+let currentUserPermissions = null;
+let isPermissionsLoaded = false;
+
+/**
+ * Load user permissions from Firestore
+ * @param {string} userId - The user ID to load permissions for
+ */
+async function loadUserPermissions(userId) {
+  try {
+    console.log("🔐 Loading permissions for user:", userId);
+    const restrictionDoc = await getDoc(doc(db, "user_restrictions", userId));
+    isPermissionsLoaded = true;
+    
+    if (restrictionDoc.exists()) {
+      currentUserPermissions = restrictionDoc.data();
+      console.log("✅ PERMISSIONS LOADED:", JSON.stringify(currentUserPermissions, null, 2));
+    } else {
+      currentUserPermissions = null;
+      console.log("ℹ️ No restrictions - FULL ACCESS");
+    }
+  } catch (err) {
+    console.error("❌ CRITICAL: Error loading permissions:", err);
+    isPermissionsLoaded = true;
+    currentUserPermissions = null;
+  }
+}
+
+/**
+ * Check if current user has access to a specific module
+ * @param {string} module - Module name (inventory, purchasing, finance, attendance)
+ * @returns {boolean} - true if user can access this module
+ */
+function checkModuleAccess(module) {
+  console.log(`🔍 CHECKING MODULE ACCESS: "${module}"`);
+  
+  // If permissions not loaded yet, allow temporarily
+  if (!isPermissionsLoaded) {
+    console.log(`   ⚠️ Permissions not loaded yet - ALLOWING`);
+    return true;
+  }
+  
+  // If no restrictions, allow everything
+  if (!currentUserPermissions) {
+    console.log(`   ✅ NO RESTRICTIONS - ALLOWED`);
+    return true;
+  }
+
+  // If no allowedModules, allow everything (backward compatible)
+  if (!currentUserPermissions.allowedModules || !Array.isArray(currentUserPermissions.allowedModules)) {
+    console.log(`   ✅ No allowedModules - ALLOWED`);
+    return true;
+  }
+
+  // Check if module is in allowedModules
+  const isAllowed = currentUserPermissions.allowedModules.includes(module);
+  console.log(`   allowedModules: [${currentUserPermissions.allowedModules.join(", ")}]`);
+  console.log(`   "${module}" allowed: ${isAllowed ? "✅ YES" : "❌ NO"}`);
+  
+  return isAllowed;
+}
+
+/**
+ * Check if current user has permission for an action in a module
+ * THROWS ERROR if permission denied
+ * @param {string} module - Module name
+ * @param {string} action - Action (view, create, edit, delete)
+ * @throws {Error} if user doesn't have permission
+ */
+function checkUserPermission(module, action) {
+  console.log(`🔍 CHECKING: module="${module}", action="${action}"`);
+  
+  // If no restrictions, allow everything
+  if (!currentUserPermissions) {
+    console.log(`   ✅ NO RESTRICTIONS - ALLOWED`);
+    return true;
+  }
+
+  // If no modules in restrictions, allow everything  
+  if (!currentUserPermissions.modules) {
+    console.log(`   ✅ No modules configured - ALLOWED`);
+    return true;
+  }
+
+  // Get module permissions
+  const modPerms = currentUserPermissions.modules[module];
+  if (!modPerms) {
+    console.log(`   ✅ Module not in restrictions - ALLOWED`);
+    return true;
+  }
+
+  // Check specific action
+  const isAllowed = modPerms[action] === true;
+  console.log(`   Module "${module}":`, modPerms);
+  console.log(`   Action "${action}":`, isAllowed ? "✅ ALLOWED" : "❌ DENIED");
+  
+  if (!isAllowed) {
+    console.log(`   🚫 BLOCKING ACTION`);
+    return false;
+  }
+  
+  return true;
+
+}
+
+/**
+ * Get permission error message
+ * @param {string} module - Module name
+ * @param {string} action - Action name
+ * @returns {string} - Error message
+ */
+function getPermissionErrorMessage(module, action) {
+  const actionNames = {
+    view: "view",
+    create: "create/add",
+    edit: "edit/modify",
+    delete: "delete/remove"
+  };
+  
+  return `❌ Permission Denied: You don't have permission to ${actionNames[action] || action} items in the ${module.toUpperCase()} module. Please contact your administrator.`;
+}
+
+// ============================================================
 // USER MANAGEMENT - Functions to handle user data in database
 // ============================================================
 
@@ -738,4 +862,10 @@ export {
   query,
   where,
   serverTimestamp,
+
+  // Permission Checking
+  loadUserPermissions,
+  checkModuleAccess,
+  checkUserPermission,
+  getPermissionErrorMessage,
 };
