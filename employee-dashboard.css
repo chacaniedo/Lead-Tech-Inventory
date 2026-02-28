@@ -217,19 +217,23 @@ body {
 }
 
 .nav-item .icon {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    width: 20px;
+    flex: 0 0 20px;
     margin-right: 12px;
     font-size: 16px;
 }
 
 .nav-item i {
     width: 20px;
-    margin-right: 12px;
     text-align: center;
     font-size: 16px;
 }
 
-.nav-item span {
-    flex: 1;
+.nav-item > span:not(.icon) {
+    flex: 0 1 auto;
 }
 
 /* ==================================
@@ -1852,6 +1856,24 @@ body {
     letter-spacing: 0.3px;
 }
 
+.announcement-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.announcement-edited-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: #0f1e35;
+    background: #1dd1a1;
+}
+
 .announcement-meta {
     display: flex;
     gap: 10px;
@@ -1892,6 +1914,17 @@ body {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.announcement-updated {
+    font-size: 10px;
+    color: #9bb8d3;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: normal;
 }
 
 .announcement-time {
@@ -2007,6 +2040,38 @@ body {
    ================================== */
 
 @media (max-width: 768px) {
+    .topbar {
+        padding: 10px 12px;
+        min-height: 64px;
+    }
+
+    .topbar-left {
+        min-width: 0;
+        gap: 8px;
+    }
+
+    .topbar-left h2 {
+        font-size: 16px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 46vw;
+    }
+
+    .topbar-right {
+        gap: 8px;
+    }
+
+    .user-role {
+        display: none;
+    }
+
+    #logoutBtn,
+    .btn-logout {
+        padding: 6px 10px;
+        font-size: 12px;
+    }
+
     .actions-announcements-wrapper {
         grid-template-columns: 1fr;
         gap: 15px;
@@ -2019,10 +2084,12 @@ body {
     .sidebar {
         position: fixed;
         left: 0;
-        top: 70px;
-        height: calc(100vh - 70px);
+        top: 64px;
+        height: calc(100vh - 64px);
         z-index: 1000;
-        width: 280px;
+        width: min(82vw, 280px);
+        padding: 16px 0;
+        box-shadow: 6px 0 18px rgba(0, 0, 0, 0.35);
     }
 
     .sidebar.mobile-hidden {
@@ -2030,7 +2097,13 @@ body {
     }
 
     .content {
-        padding: 20px;
+        padding: 16px;
+        overflow-x: hidden;
+    }
+
+    .main-content {
+        width: 100%;
+        min-width: 0;
     }
 
     .attendance-card-main {
@@ -2090,6 +2163,17 @@ body {
 }
 
 @media (max-width: 480px) {
+    .topbar-left h2 {
+        font-size: 14px;
+        max-width: 42vw;
+    }
+
+    #logoutBtn,
+    .btn-logout {
+        padding: 5px 8px;
+        font-size: 11px;
+    }
+
     .attendance-header h2 {
         font-size: 22px;
     }
